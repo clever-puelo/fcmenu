@@ -33,6 +33,8 @@ from migration.decimals import format_decimal
 from migration.repository import RepositoryFactory
 from migration.services import CuentaCorrienteService
 
+from .procesando_dialog import ejecutar_con_progreso
+
 COLUMNAS = ["Cliente / Comprobante", "Tipo", "Fecha", "Fec.Vto.", "Importe", "Debe", "Días Venc.", "Estado"]
 COL_TIPO, COL_FECHA, COL_FECVTO, COL_IMPORTE, COL_DEBE, COL_DIAS, COL_ESTADO = range(1, 8)
 COLUMNAS_DERECHA = {COL_IMPORTE, COL_DEBE, COL_DIAS}
@@ -113,7 +115,22 @@ class CobranzasZonaWindow(QMainWindow):
         zona = self.combo_zona.currentData()
         if zona is None:
             return
-        resultado = self.cc_service.cobranzas_por_zona(zona)
+
+        # "Procesando..." con progreso + Cancelar (pedido del usuario,
+        # 2026-08-18) — la consulta corre en un hilo aparte con su
+        # PROPIA sesión de base (`get_session()`, no `self.db`): las
+        # sesiones de SQLAlchemy no son seguras para compartir entre
+        # threads, ver docstring de `ejecutar_con_progreso`.
+        def _consultar():
+            db_hilo = get_session()
+            try:
+                return CuentaCorrienteService(db_hilo).cobranzas_por_zona(zona)
+            finally:
+                db_hilo.close()
+
+        resultado = ejecutar_con_progreso(self, "Buscando cobranzas de la zona...", _consultar)
+        if resultado is None:
+            return  # cancelado por el usuario
 
         self.arbol.setSortingEnabled(False)
         self.arbol.clear()

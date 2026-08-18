@@ -28,6 +28,7 @@ from reportlab.graphics import renderPDF
 from reportlab.graphics.barcode import qr
 from reportlab.graphics.shapes import Drawing
 from reportlab.lib import colors
+from reportlab.lib.enums import TA_CENTER, TA_LEFT, TA_RIGHT
 from reportlab.lib.pagesizes import A4, landscape
 from reportlab.lib.styles import ParagraphStyle, getSampleStyleSheet
 from reportlab.lib.units import mm
@@ -448,11 +449,35 @@ def generar_pdf_listado(
         leftMargin=12 * mm, rightMargin=12 * mm, topMargin=12 * mm, bottomMargin=12 * mm,
         title=titulo,
     )
+    ancho_util = tamano_pagina[0] - 24 * mm
 
-    estilo_titulo = ParagraphStyle("TituloListado", parent=_ESTILOS["Heading1"], fontSize=14, spaceAfter=2)
-    estilo_subtitulo = ParagraphStyle("SubtituloListado", parent=_ESTILOS["Normal"], fontSize=9, spaceAfter=8)
+    # Cabecera de impresión (pedido del usuario, 2026-08-18): "ALESTEL
+    # SRL" arriba a la izquierda, fecha arriba a la derecha, el título
+    # del listado centrado, y debajo de éste (también centrado) la
+    # selección del operador (Cliente/Zona/Todos/etc. — lo que hasta
+    # ahora era `subtitulo`, mismo texto, sólo cambia dónde y cómo se
+    # dibuja).
+    estilo_empresa = ParagraphStyle("EmpresaListado", parent=_ESTILOS["Normal"], fontSize=11, fontName="Helvetica-Bold", alignment=TA_LEFT)
+    estilo_fecha = ParagraphStyle("FechaListado", parent=_ESTILOS["Normal"], fontSize=9, alignment=TA_RIGHT)
+    estilo_titulo = ParagraphStyle(
+        "TituloListado", parent=_ESTILOS["Heading1"], fontSize=14, alignment=TA_CENTER, spaceBefore=6, spaceAfter=2
+    )
+    estilo_subtitulo = ParagraphStyle("SubtituloListado", parent=_ESTILOS["Normal"], fontSize=9, alignment=TA_CENTER, spaceAfter=8)
 
-    elementos = [Paragraph(titulo, estilo_titulo), Paragraph(subtitulo, estilo_subtitulo), Spacer(1, 4)]
+    fila_encabezado = Table(
+        [[Paragraph("ALESTEL SRL", estilo_empresa), Paragraph(date.today().strftime("%d/%m/%Y"), estilo_fecha)]],
+        colWidths=[ancho_util / 2, ancho_util / 2],
+    )
+    fila_encabezado.setStyle(
+        TableStyle([("VALIGN", (0, 0), (-1, -1), "TOP"), ("LEFTPADDING", (0, 0), (-1, -1), 0), ("RIGHTPADDING", (0, 0), (-1, -1), 0)])
+    )
+
+    elementos = [
+        fila_encabezado,
+        Paragraph(titulo, estilo_titulo),
+        Paragraph(subtitulo, estilo_subtitulo),
+        Spacer(1, 4),
+    ]
 
     datos_tabla = [columnas] + filas
     tabla = Table(datos_tabla, repeatRows=1)

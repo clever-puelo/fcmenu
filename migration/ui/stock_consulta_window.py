@@ -43,7 +43,8 @@ class StockConsultaWindow(QMainWindow):
     def __init__(self, parent: QWidget | None = None):
         super().__init__(parent)
         self.setWindowTitle("Consulta de Stock")
-        self.resize(900, 600)
+        # +39% ancho / +50% alto (feedback del usuario, 2026-08-18).
+        self.resize(1251, 900)
 
         self.db = get_session()
         self.repos = RepositoryFactory(self.db)
@@ -71,6 +72,11 @@ class StockConsultaWindow(QMainWindow):
         btn_buscar = QPushButton("Buscar")
         btn_buscar.clicked.connect(self._on_buscar)
         fila_filtro.addWidget(btn_buscar)
+
+        # No tenía botón Cerrar (feedback del usuario, 2026-08-18).
+        btn_cerrar = QPushButton("Cerrar")
+        btn_cerrar.clicked.connect(self.close)
+        fila_filtro.addWidget(btn_cerrar)
         layout.addLayout(fila_filtro)
 
         self.tabla = TablaBusqueda(COLUMNAS, columnas_derecha=(COL_PVTA, COL_PCOS, COL_STOCK, COL_STMIN))

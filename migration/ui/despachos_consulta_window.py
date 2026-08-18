@@ -25,7 +25,8 @@ class DespachosConsultaWindow(QMainWindow):
     def __init__(self, parent: QWidget | None = None):
         super().__init__(parent)
         self.setWindowTitle("Consulta de Despachos")
-        self.resize(560, 520)
+        # +30% ancho / +80% alto (feedback del usuario, 2026-08-18).
+        self.resize(728, 936)
 
         self.db = get_session()
         self.repos = RepositoryFactory(self.db)
@@ -48,6 +49,11 @@ class DespachosConsultaWindow(QMainWindow):
         btn_limpiar.clicked.connect(self._cargar_resumen)
         fila_filtro.addWidget(btn_limpiar)
         fila_filtro.addStretch()
+
+        # No tenía botón Cerrar (feedback del usuario, 2026-08-18).
+        btn_cerrar = QPushButton("Cerrar")
+        btn_cerrar.clicked.connect(self.close)
+        fila_filtro.addWidget(btn_cerrar)
         layout.addLayout(fila_filtro)
 
         self.tabla = TablaBusqueda(COLUMNAS, columnas_derecha=(COL_NRODESP, COL_ARTICULOS))

@@ -49,6 +49,11 @@ todo el sistema, salvo aclaración específica:
    Emisión/Vencimiento; reafirmado como norma general 2026-08-16 al
    pedirlo también en Consulta de Cheques y Ventas de Artículos por
    Cliente) — ver `crear_boton_hoy()` más abajo.
+10. Todo proceso que implique demora (consulta pesada, generación de un
+    reporte/PDF) muestra "Procesando..." con barra de progreso y la
+    posibilidad de cancelar, en vez de bloquear la UI en silencio
+    (confirmado por el usuario, 2026-08-18) — ver
+    `procesando_dialog.ejecutar_con_progreso()`.
 """
 
 from __future__ import annotations

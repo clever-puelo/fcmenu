@@ -44,7 +44,8 @@ class TotalesDiariosWindow(QMainWindow):
     def __init__(self, parent: QWidget | None = None):
         super().__init__(parent)
         self.setWindowTitle("Totales Diarios")
-        self.resize(950, 600)
+        # +20% ancho / +50% alto (feedback del usuario, 2026-08-18).
+        self.resize(1140, 900)
 
         self.db = get_session()
         self.repos = RepositoryFactory(self.db)

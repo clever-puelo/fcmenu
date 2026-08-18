@@ -94,7 +94,8 @@ class CtaCteWindow(QMainWindow):
     def __init__(self, parent: QWidget | None = None):
         super().__init__(parent)
         self.setWindowTitle("Cuentas Corrientes")
-        self.resize(1100, 720)
+        # +20% ancho / +20% alto (feedback del usuario, 2026-08-18).
+        self.resize(1320, 864)
 
         self.db = get_session()
         self.repos = RepositoryFactory(self.db)
@@ -160,6 +161,12 @@ class CtaCteWindow(QMainWindow):
         btn_otro_cliente = QPushButton("Otro Cliente")
         btn_otro_cliente.clicked.connect(self._on_otro_cliente)
         fila.addWidget(btn_otro_cliente)
+
+        # No tenía botón Cerrar (feedback del usuario, 2026-08-18).
+        fila.addStretch()
+        btn_cerrar = QPushButton("Cerrar")
+        btn_cerrar.clicked.connect(self.close)
+        fila.addWidget(btn_cerrar)
 
         return contenedor
 

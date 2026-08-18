@@ -18,7 +18,11 @@ from .theme import aplicar_tema
 def main() -> int:
     app = QApplication(sys.argv)
     aplicar_tema(app)
-    ventana = ListadosWindow()
+    # `reporte_inicial` ahora es obligatorio (ya no hay combo adentro de
+    # la ventana para elegirlo/cambiarlo, ver docstring de
+    # ListadosWindow) — "Clientes" como default razonable para probar
+    # standalone.
+    ventana = ListadosWindow(reporte_inicial="clientes")
     ventana.show()
     return app.exec()
 

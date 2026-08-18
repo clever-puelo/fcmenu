@@ -43,7 +43,8 @@ class FacturasEmitidasWindow(QMainWindow):
     def __init__(self, parent: QWidget | None = None):
         super().__init__(parent)
         self.setWindowTitle("Facturas Emitidas")
-        self.resize(1050, 600)
+        # +100% ancho / +50% alto (feedback del usuario, 2026-08-18).
+        self.resize(2100, 900)
 
         self.db = get_session()
         self.repos = RepositoryFactory(self.db)

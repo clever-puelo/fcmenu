@@ -75,6 +75,10 @@ class VentasArticuloWindow(QMainWindow):
         self.setCentralWidget(central)
         layout = QVBoxLayout(central)
 
+        # 2 líneas de opciones (feedback del usuario, 2026-08-18: "hacer
+        # 2 lineas de opciones, colocar mes y año en una segunda linea
+        # para contraer la ventana") — Mes/Año bajan a una fila propia,
+        # el resto queda en la primera.
         fila_filtro = QHBoxLayout()
         fila_filtro.addWidget(QLabel("Sección :"))
         self.combo_seccion = QComboBox()
@@ -90,15 +94,6 @@ class VentasArticuloWindow(QMainWindow):
         self.txt_hasta.setMaximumWidth(80)
         fila_filtro.addWidget(self.txt_hasta)
 
-        fila_filtro.addWidget(QLabel("Mes :"))
-        self.combo_mes = QComboBox()
-        self.combo_mes.addItems(MESES)
-        fila_filtro.addWidget(self.combo_mes)
-
-        fila_filtro.addWidget(QLabel("Año :"))
-        self.combo_anio = QComboBox()
-        fila_filtro.addWidget(self.combo_anio)
-
         btn_expandir = QPushButton("Expandir")
         btn_expandir.clicked.connect(lambda: self.arbol.expandAll())
         fila_filtro.addWidget(btn_expandir)
@@ -111,6 +106,18 @@ class VentasArticuloWindow(QMainWindow):
         btn_cerrar.clicked.connect(self.close)
         fila_filtro.addWidget(btn_cerrar)
         layout.addLayout(fila_filtro)
+
+        fila_fecha = QHBoxLayout()
+        fila_fecha.addWidget(QLabel("Mes :"))
+        self.combo_mes = QComboBox()
+        self.combo_mes.addItems(MESES)
+        fila_fecha.addWidget(self.combo_mes)
+
+        fila_fecha.addWidget(QLabel("Año :"))
+        self.combo_anio = QComboBox()
+        fila_fecha.addWidget(self.combo_anio)
+        fila_fecha.addStretch()
+        layout.addLayout(fila_fecha)
 
         self.arbol = QTreeWidget()
         self.arbol.setColumnCount(len(COLUMNAS))

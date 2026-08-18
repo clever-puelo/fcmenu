@@ -41,6 +41,7 @@ from migration.provincias import NOMBRE_PROVINCIA, nombre_provincia
 from migration.repository import ETIQUETAS_TIPO_CTASCTE, RepositoryFactory
 from migration.services import ListadosService
 
+from .cliente_busqueda_window import ClienteBusquedaWindow
 from .pdf_preview_dialog import PdfPreviewDialog
 from .widgets import crear_boton_hoy
 
@@ -69,10 +70,22 @@ VENDEDOR_OBLIGATORIO = {"comisiones_cobranzas"}
 
 
 class ListadosWindow(QMainWindow):
-    def __init__(self, parent: QWidget | None = None, *, reporte_inicial: str | None = None):
+    def __init__(self, parent: QWidget | None = None, *, reporte_inicial: str):
         super().__init__(parent)
-        self.setWindowTitle("Listados Varios")
-        self.resize(640, 420)
+        # Ya no hay combo para elegir/cambiar el listado acá adentro
+        # (feedback del usuario, 2026-08-18: "quitar el combo de la
+        # ventana para seleccionar el listado, ya se selecciona desde
+        # el boton superior") — cada botón de la barra de tareas de
+        # "Listados" abre esta ventana con SU reporte ya elegido, sin
+        # forma de cambiarlo desde acá adentro (para eso está el botón
+        # de otro listado en la barra de tareas). El título de la
+        # ventana ya queda como la etiqueta del botón clickeado (ver
+        # `MainMenuWindow._mostrar`), pero por si se instancia standalone
+        # (`main_listados.py`) también se arma un título razonable acá.
+        self._reporte = reporte_inicial
+        self.setWindowTitle(f"Listados Varios — {dict(REPORTES).get(reporte_inicial, reporte_inicial)}")
+        # Ventana 100% más ancha (feedback del usuario, 2026-08-18).
+        self.resize(1280, 420)
 
         self.db = get_session()
         self.repos = RepositoryFactory(self.db)
@@ -80,16 +93,6 @@ class ListadosWindow(QMainWindow):
 
         self._construir_ui()
         self._poblar_combos_tablas()
-        if reporte_inicial is not None:
-            # Cada listado tiene su propio botón en la barra de tareas
-            # (feedback del usuario, 2026-08-16: "faltan todos los
-            # listados" — estaban todos ya implementados, pero escondidos
-            # detrás de un solo combo, sólo se veía el primero) — el botón
-            # puntual precarga el combo con el reporte elegido; el combo
-            # sigue ahí para cambiar de listado sin volver al menú.
-            idx = self.combo_reporte.findData(reporte_inicial)
-            if idx >= 0:
-                self.combo_reporte.setCurrentIndex(idx)
         self._on_reporte_cambiado()
 
     # ------------------------------------------------------------------
@@ -98,14 +101,9 @@ class ListadosWindow(QMainWindow):
         self.setCentralWidget(central)
         layout = QVBoxLayout(central)
 
-        fila_reporte = QHBoxLayout()
-        fila_reporte.addWidget(QLabel("Listado :"))
-        self.combo_reporte = QComboBox()
-        for clave, etiqueta in REPORTES:
-            self.combo_reporte.addItem(etiqueta, clave)
-        self.combo_reporte.currentIndexChanged.connect(self._on_reporte_cambiado)
-        fila_reporte.addWidget(self.combo_reporte, stretch=1)
-        layout.addLayout(fila_reporte)
+        lbl_reporte = QLabel(dict(REPORTES).get(self._reporte, self._reporte))
+        lbl_reporte.setStyleSheet("font-size: 13pt; font-weight: bold;")
+        layout.addWidget(lbl_reporte)
 
         # -- Fechas ------------------------------------------------------
         self.grupo_fechas = QGroupBox("Período")
@@ -138,10 +136,25 @@ class ListadosWindow(QMainWindow):
             fila_c.addWidget(r)
         self.radio_todos.setChecked(True)
 
+        # Ya no se tipea a mano — lo llena `_on_elegir_cliente()` (sigue
+        # existiendo, oculto, sólo como "backing store" del código
+        # elegido, `_filtro_cliente()` lo sigue leyendo igual).
         self.spin_clte = QSpinBox()
         self.spin_clte.setRange(0, 999999)
         self.spin_clte.setButtonSymbols(QSpinBox.ButtonSymbols.NoButtons)
+        self.spin_clte.setVisible(False)
         fila_c.addWidget(self.spin_clte)
+        self.lbl_cliente_elegido = QLabel("(sin cliente elegido)")
+        fila_c.addWidget(self.lbl_cliente_elegido)
+        # Ventana de selección de Cliente (feedback del usuario,
+        # 2026-08-18: "En los listados que pide un cliente, aparezca la
+        # ventana de selección de cliente") — se abre sola al elegir
+        # "Uno Sólo" (mismo criterio ya usado en Facturador/Recibo/
+        # CtaCte), y también con este botón para volver a cambiarlo sin
+        # tener que destildar/tildar el radio de nuevo.
+        self.btn_elegir_cliente = QPushButton("Elegir Cliente...")
+        self.btn_elegir_cliente.clicked.connect(self._on_elegir_cliente)
+        fila_c.addWidget(self.btn_elegir_cliente)
 
         self.combo_zona = QComboBox()
         fila_c.addWidget(self.combo_zona)
@@ -199,7 +212,7 @@ class ListadosWindow(QMainWindow):
 
     # ------------------------------------------------------------------
     def _on_reporte_cambiado(self) -> None:
-        reporte = self.combo_reporte.currentData()
+        reporte = self._reporte
         self.grupo_fechas.setVisible(reporte in USA_FECHAS)
         self.grupo_cliente.setVisible(reporte in USA_CLIENTE_FILTRO)
         self.radio_provincia.setVisible(reporte == "clientes")
@@ -209,9 +222,26 @@ class ListadosWindow(QMainWindow):
         self.combo_seccion.setVisible(reporte in USA_SECCION)
 
     def _on_filtro_cliente_cambiado(self) -> None:
-        self.spin_clte.setVisible(self.radio_uno.isChecked())
+        es_uno = self.radio_uno.isChecked()
+        self.lbl_cliente_elegido.setVisible(es_uno)
+        self.btn_elegir_cliente.setVisible(es_uno)
         self.combo_zona.setVisible(self.radio_zona.isChecked())
         self.combo_provincia.setVisible(self.radio_provincia.isChecked())
+        if es_uno and self.spin_clte.value() == 0:
+            # Recién se tildó "Uno Sólo" y todavía no hay cliente
+            # elegido — se abre el buscador directo, no hace falta
+            # clickear "Elegir Cliente..." a mano primero.
+            self._on_elegir_cliente()
+
+    def _on_elegir_cliente(self) -> None:
+        dialogo = ClienteBusquedaWindow(parent=self, modo_seleccion=True)
+        dialogo.exec()
+        if dialogo.cliente_elegido is None:
+            return
+        self.spin_clte.setValue(dialogo.cliente_elegido.CODIGO)
+        self.lbl_cliente_elegido.setText(
+            f"{dialogo.cliente_elegido.CODIGO} — {(dialogo.cliente_elegido.NOMB or '').strip()}"
+        )
 
     def _filtro_cliente(self) -> tuple[str, object]:
         if self.radio_uno.isChecked():
@@ -222,9 +252,22 @@ class ListadosWindow(QMainWindow):
             return ListadosService.FILTRO_PROVINCIA, self.combo_provincia.currentData()
         return ListadosService.FILTRO_TODOS, None
 
+    def _descripcion_filtro_cliente(self) -> str:
+        """Texto de la selección de operador (pedido del usuario,
+        2026-08-18: "en el centro abajo del titulo, la seleccion del
+        operador (Cliente, zona, todos, etc.)") — se agrega al
+        `subtitulo` de cada listado que filtra por cliente."""
+        if self.radio_uno.isChecked():
+            return f"Cliente: {self.lbl_cliente_elegido.text()}"
+        if self.radio_zona.isChecked():
+            return f"Zona: {self.combo_zona.currentText()}"
+        if self.radio_provincia.isChecked():
+            return f"Provincia: {self.combo_provincia.currentText()}"
+        return "Todos los Clientes"
+
     # ------------------------------------------------------------------
     def _on_generar(self) -> None:
-        reporte = self.combo_reporte.currentData()
+        reporte = self._reporte
         if reporte in VENDEDOR_OBLIGATORIO and self.combo_vendedor.currentData() is None:
             QMessageBox.warning(self, "Listados Varios", "Elegí un Vendedor.")
             return
@@ -286,7 +329,7 @@ class ListadosWindow(QMainWindow):
             for c in filas
         ]
         return generar_pdf_listado(
-            titulo="Clientes", subtitulo=f"{len(filas)} clientes",
+            titulo="Clientes", subtitulo=f"{self._descripcion_filtro_cliente()} — {len(filas)} clientes",
             columnas=["Código", "Nombre", "Teléfono", "Dirección", "Localidad", "Provincia"],
             filas=datos, columnas_derecha=(0,), nombre_archivo="listado_clientes.pdf",
         )
@@ -394,7 +437,7 @@ class ListadosWindow(QMainWindow):
                 ])
         titulo = "Deuda Pendiente" if reporte == "deuda_pendiente" else "Planilla de Cobranzas"
         return generar_pdf_listado(
-            titulo=titulo, subtitulo=f"{len(grupos)} clientes con deuda",
+            titulo=titulo, subtitulo=f"{self._descripcion_filtro_cliente()} — {len(grupos)} clientes con deuda",
             columnas=["Cód.", "Cliente", "Tipo", "Cpbte.", "Fecha", "Vto.", "Debe"],
             filas=datos, columnas_derecha=(0, 3, 6),
             pie=[("Total", f"$ {format_decimal(total)}")], nombre_archivo=f"{reporte}.pdf",
@@ -418,7 +461,7 @@ class ListadosWindow(QMainWindow):
                     format_decimal(importe), format_decimal(saldo),
                 ])
         return generar_pdf_listado(
-            titulo="Estado de Cuenta", subtitulo=f"{len(grupos)} clientes",
+            titulo="Estado de Cuenta", subtitulo=f"{self._descripcion_filtro_cliente()} — {len(grupos)} clientes",
             columnas=["Cód.", "Cliente", "Fecha", "Tipo", "Cpbte.", "Importe", "Saldo"],
             filas=datos, columnas_derecha=(0, 4, 5, 6), nombre_archivo="estado_cuenta.pdf",
         )
@@ -431,7 +474,7 @@ class ListadosWindow(QMainWindow):
         datos = [[str(f["codigo"]), f["nombre"], format_decimal(f["saldo"])] for f in filas]
         total = sum((f["saldo"] for f in filas), Decimal("0"))
         return generar_pdf_listado(
-            titulo="Saldos de Cta. Cte.", subtitulo=f"{len(filas)} clientes",
+            titulo="Saldos de Cta. Cte.", subtitulo=f"{self._descripcion_filtro_cliente()} — {len(filas)} clientes",
             columnas=["Cód.", "Cliente", "Saldo"],
             filas=datos, columnas_derecha=(0, 2),
             pie=[("Total", f"$ {format_decimal(total)}")], nombre_archivo="saldos_ctacte.pdf",
