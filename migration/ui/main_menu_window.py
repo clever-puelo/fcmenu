@@ -95,6 +95,40 @@ def _mm_a_px(mm: float) -> int:
     return round(mm * PX_POR_MM)
 
 
+# % del panel MDI real (NO de la pantalla completa) para las pantallas
+# de trabajo más grandes — feedback del usuario, 2026-08-19: "ahora son
+# gigantes". `redimensionar_pct_pantalla()` (convención #11,
+# `widgets.py`) calcula contra la pantalla física completa — tiene
+# sentido para uso standalone (`main_facturador.py` y afines, sin MDI
+# de por medio), pero la ventana principal NO arranca maximizada
+# (pedido explícito del usuario, no se toca) así que el panel MDI real
+# siempre es más chico que la pantalla completa: un 90%/95% de la
+# pantalla física terminaba siendo MÁS GRANDE que el panel MDI donde
+# tiene que entrar, y se veía "gigante"/desbordado. Acá se recalcula
+# centralizado contra el tamaño REAL del panel MDI en el momento de
+# mostrarla (mismo criterio que ya usaba Listados con su margen en mm
+# — por eso fue la única que el usuario no reportó como desajustada).
+PCT_MDI_POR_CLASE: dict[str, tuple[float, float]] = {
+    "TablasWindow": (80, 75),
+    "FacturadorWindow": (90, 85),
+    "ReciboWindow": (85, 60),
+    "ModPreciosWindow": (75, 70),
+    "StockMovimientoWindow": (80, 80),
+    "CtaCteWindow": (92, 88),
+    "CobranzasZonaWindow": (90, 85),
+    "FacturasEmitidasWindow": (95, 88),
+    "TotalesDiariosWindow": (85, 88),
+    "ChequesConsultaWindow": (75, 88),
+    "VentasSeccionWindow": (80, 88),
+    "VentasArticuloWindow": (85, 78),
+    "StockConsultaWindow": (92, 88),
+    "DespachosConsultaWindow": (60, 88),
+    "ArregloCtaCteWindow": (65, 55),
+    "ArregloSubdiarioWindow": (60, 60),
+    "ParametrosWindow": (55, 45),
+}
+
+
 def _envolver_en_dos_lineas(texto: str, fuente: QFont, ancho_disponible: int) -> str:
     """Si `texto` no entra en una línea dentro de `ancho_disponible`
     (según `fuente`), lo parte en 2 líneas por la palabra más cercana a
@@ -769,9 +803,16 @@ class MainMenuWindow(QMainWindow):
         30mm por lado lateral y a 50mm de arriba") — acá se interpreta
         "en el centro... a 30mm/50mm" como simétrico (30mm también a
         los costados, 50mm también abajo), no sólo un ancho fijo pegado
-        arriba."""
+        arriba.
+
+        Para las pantallas de `PCT_MDI_POR_CLASE`, el tamaño se
+        recalcula acá contra el panel MDI real (ver docstring de esa
+        constante) — pisa el tamaño que la propia ventana ya traía de
+        su `__init__` (útil sólo para cuando se corre standalone, sin
+        este MDI de por medio)."""
         area = self.mdi.viewport().size()
-        if type(ventana).__name__ == "ListadosWindow":
+        nombre_clase = type(ventana).__name__
+        if nombre_clase == "ListadosWindow":
             margen_lateral = _mm_a_px(MARGEN_LISTADOS_LATERAL_MM)
             margen_superior = _mm_a_px(MARGEN_LISTADOS_SUPERIOR_MM)
             ancho = max(area.width() - 2 * margen_lateral, 300)
@@ -779,6 +820,12 @@ class MainMenuWindow(QMainWindow):
             subventana.resize(ancho, alto)
             subventana.move(margen_lateral, margen_superior)
             return
+        porcentajes = PCT_MDI_POR_CLASE.get(nombre_clase)
+        if porcentajes is not None:
+            ancho_pct, alto_pct = porcentajes
+            ancho = max(round(area.width() * ancho_pct / 100), 300)
+            alto = max(round(area.height() * alto_pct / 100), 300)
+            subventana.resize(ancho, alto)
         x = max((area.width() - subventana.width()) // 2, 0)
         y = max((area.height() - subventana.height()) // 2, 0)
         subventana.move(x, y)
