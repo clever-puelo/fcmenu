@@ -46,8 +46,10 @@ class CobranzasZonaWindow(QMainWindow):
     def __init__(self, parent: QWidget | None = None):
         super().__init__(parent)
         self.setWindowTitle("Cobranzas por Zona")
-        # +30% ancho / +60% alto (feedback del usuario, 2026-08-18).
-        self.resize(1300, 992)
+        # +30% ancho / +60% alto más (feedback del usuario, 2026-08-18,
+        # tercera ronda — el usuario repitió el mismo pedido, confirmó
+        # sumarlo de nuevo).
+        self.resize(1690, 1587)
 
         self.db = get_session()
         self.repos = RepositoryFactory(self.db)

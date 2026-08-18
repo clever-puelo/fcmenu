@@ -55,11 +55,13 @@ class ArregloSubdiarioWindow(QMainWindow):
     def __init__(self, parent: QWidget | None = None):
         super().__init__(parent)
         self.setWindowTitle("Arreglos — Subdiario Ventas")
-        # Más baja (feedback del usuario, 2026-08-18, segunda ronda: "se
-        # sale del panel central, comprimir datos si es necesario") — la
-        # cabecera y el panel de Cliente se comprimieron a menos filas
-        # (ver `_armar_cabecera`/`_armar_cliente`), así entra sin scroll.
-        self.resize(680, 480)
+        # Todavía más chica (feedback del usuario, 2026-08-18, tercera
+        # ronda: "se sale del panel central, comprimir datos si es
+        # necesario... comprimir el contenido al mínimo posible") — el
+        # panel "Comprobante" y el de "Cliente" se comprimieron a menos
+        # filas todavía (ver `_armar_cabecera`/`_armar_cliente`) y los
+        # campos se angostaron acorde al tamaño real de sus datos.
+        self.resize(640, 420)
 
         self.db = get_session()
         self.repos = RepositoryFactory(self.db)
@@ -103,27 +105,46 @@ class ArregloSubdiarioWindow(QMainWindow):
         self._on_tipo_cambiado()
         self._enter_as_tab = EnterAsTabFilter(self, boton_final=self.btn_grabar)
 
+    @staticmethod
+    def _form_compacto(panel: QWidget) -> QFormLayout:
+        """`QFormLayout` con espaciado/márgenes mínimos — pedido del
+        usuario, 2026-08-18, tercera ronda: "panel comprobante achicar,
+        comprimir el contenido al mínimo posible" (y lo mismo para
+        "Cliente", más abajo) — mismo criterio ya usado en
+        `TablasWindow._form_compacto`."""
+        form = QFormLayout(panel)
+        form.setVerticalSpacing(3)
+        form.setContentsMargins(6, 4, 6, 4)
+        return form
+
     def _armar_cabecera(self) -> QGroupBox:
         grupo = QGroupBox("Comprobante")
-        form = QFormLayout(grupo)
+        form = self._form_compacto(grupo)
 
+        # Fecha y Tipo Cpbte. en la misma línea (feedback del usuario,
+        # 2026-08-18, tercera ronda: "comprimir el contenido al mínimo
+        # posible") — antes 2 filas propias.
         self.fecha = QDateEdit()
         self.fecha.setCalendarPopup(True)
         self.fecha.setDate(QDate.currentDate())
-        fila_fecha = QHBoxLayout()
-        fila_fecha.addWidget(self.fecha)
-        fila_fecha.addWidget(crear_boton_hoy(self.fecha))
-        form.addRow("Fecha :", fila_fecha)
-
+        self.fecha.setMaximumWidth(110)
         self.combo_tipo = QComboBox()
         for codigo, etiqueta in TIPOS_CPBTE:
             self.combo_tipo.addItem(f"{codigo}-{etiqueta}", codigo)
-        form.addRow("Tipo Cpbte. :", self.combo_tipo)
+        self.combo_tipo.setMaximumWidth(160)
+        fila_fecha = QHBoxLayout()
+        fila_fecha.addWidget(self.fecha)
+        fila_fecha.addWidget(crear_boton_hoy(self.fecha))
+        fila_fecha.addWidget(QLabel("Tipo Cpbte. :"))
+        fila_fecha.addWidget(self.combo_tipo)
+        fila_fecha.addStretch()
+        form.addRow("Fecha :", fila_fecha)
 
         # Letra, Prefijo y Nro. Cpbte. en la misma línea (feedback del
         # usuario, 2026-08-18, segunda ronda) — antes 3 filas propias.
         self.combo_letra = QComboBox()
         self.combo_letra.addItems(LETRAS)
+        self.combo_letra.setMaximumWidth(70)
         self.txt_prefijo = EnteroLineEdit("0001")
         self.txt_prefijo.setMaximumWidth(70)
         self.txt_cpbte = EnteroLineEdit()
@@ -145,11 +166,12 @@ class ArregloSubdiarioWindow(QMainWindow):
 
     def _armar_cliente(self) -> QGroupBox:
         grupo = QGroupBox("Cliente")
-        form = QFormLayout(grupo)
+        form = self._form_compacto(grupo)
 
         self.spin_clte = QSpinBox()
         self.spin_clte.setRange(0, 999999)
         self.spin_clte.setButtonSymbols(QSpinBox.ButtonSymbols.NoButtons)
+        self.spin_clte.setMaximumWidth(90)
         # Botón de búsqueda de Cliente (feedback del usuario, 2026-08-18,
         # segunda ronda) — mismo buscador modal ya usado en Facturador/
         # Recibo/Cta.Cte./Arreglo Cta.Cte.
@@ -163,67 +185,102 @@ class ArregloSubdiarioWindow(QMainWindow):
 
         self.txt_nombre = UpperCaseLineEdit()
         self.txt_nombre.setMaxLength(100)
+        self.txt_nombre.setMaximumWidth(320)
         form.addRow("Razón Social :", self.txt_nombre)
 
         self.txt_pcia = UpperCaseLineEdit()
         self.txt_pcia.setMaxLength(1)
+        self.txt_pcia.setMaximumWidth(40)
         form.addRow("Pcia. (letra) :", self.txt_pcia)
 
         # Cod.IVA y CUIT en la misma línea (feedback del usuario,
         # 2026-08-18, segunda ronda) — antes 2 filas propias.
         self.txt_cuit = EnteroLineEdit()
+        self.txt_cuit.setMaximumWidth(110)
         self.combo_civa = QComboBox()
         for codigo, etiqueta in CIVA_OPCIONES:
             self.combo_civa.addItem(etiqueta, codigo)
+        self.combo_civa.setMaximumWidth(190)
         fila_civa_cuit = QHBoxLayout()
         fila_civa_cuit.addWidget(self.txt_cuit)
         fila_civa_cuit.addWidget(QLabel("Cod. IVA :"))
         fila_civa_cuit.addWidget(self.combo_civa)
+        fila_civa_cuit.addStretch()
         form.addRow("CUIT :", fila_civa_cuit)
 
         # Vendedor y Zona en la misma línea (feedback del usuario,
         # 2026-08-18, segunda ronda) — antes 2 filas propias.
         self.combo_vend = QComboBox()
+        self.combo_vend.setMaximumWidth(170)
         self.combo_zona = QComboBox()
+        self.combo_zona.setMaximumWidth(130)
         fila_vend_zona = QHBoxLayout()
         fila_vend_zona.addWidget(self.combo_vend)
         fila_vend_zona.addWidget(QLabel("Zona :"))
         fila_vend_zona.addWidget(self.combo_zona)
+        fila_vend_zona.addStretch()
         form.addRow("Vendedor :", fila_vend_zona)
 
+        # Cond.Vta. y Forma Ped./Motivo en la misma línea (feedback del
+        # usuario, 2026-08-18, tercera ronda: "achicar ese panel al
+        # mínimo también") — antes Cond.Vta. tenía su propia fila y
+        # Forma Ped./Motivo otras 2 (una por combo, alternados con
+        # `setVisible`, con una fila fantasma de etiqueta vacía cuando
+        # el otro combo estaba oculto). Ahora los 3 comparten una sola
+        # fila; `self.lbl_motivo` sigue cambiando de texto en
+        # `_on_tipo_cambiado` ("Forma Ped. :"/"Motivo :").
         self.combo_cvta = QComboBox()
-        form.addRow("Cond. Vta. :", self.combo_cvta)
-
+        self.combo_cvta.setMaximumWidth(170)
         self.lbl_motivo = QLabel("Forma Ped. :")
         self.combo_forma_ped = QComboBox()
         self.combo_forma_ped.addItems(FORMAS_PEDIDO)
+        self.combo_forma_ped.setMaximumWidth(150)
         self.combo_motivo = QComboBox()
-        form.addRow(self.lbl_motivo, self.combo_forma_ped)
-        form.addRow("", self.combo_motivo)
+        self.combo_motivo.setMaximumWidth(190)
+        fila_cvta_motivo = QHBoxLayout()
+        fila_cvta_motivo.addWidget(self.combo_cvta)
+        fila_cvta_motivo.addWidget(self.lbl_motivo)
+        fila_cvta_motivo.addWidget(self.combo_forma_ped)
+        fila_cvta_motivo.addWidget(self.combo_motivo)
+        fila_cvta_motivo.addStretch()
+        form.addRow("Cond. Vta. :", fila_cvta_motivo)
 
         return grupo
 
     def _armar_importes(self) -> QGroupBox:
         grupo = QGroupBox("Importes")
-        form = QFormLayout(grupo)
+        form = self._form_compacto(grupo)
 
+        # Campos acordes al tamaño de los datos (feedback del usuario,
+        # 2026-08-18, tercera ronda) — importes topeados como en
+        # `ArregloCtaCteWindow`, enteros chicos (Items/Tot.Unid.) más
+        # angostos todavía.
         self.txt_grins = MontoLineEdit()
+        self.txt_grins.setMaximumWidth(120)
         form.addRow("Gravado :", self.txt_grins)
         self.txt_ivains = MontoLineEdit()
+        self.txt_ivains.setMaximumWidth(120)
         form.addRow("IVA Inscr. :", self.txt_ivains)
         self.txt_ivanoins = MontoLineEdit()
+        self.txt_ivanoins.setMaximumWidth(120)
         form.addRow("IVA No Insc. :", self.txt_ivanoins)
         self.txt_exento = MontoLineEdit()
+        self.txt_exento.setMaximumWidth(120)
         form.addRow("Exento :", self.txt_exento)
         self.txt_bon = MontoLineEdit()
+        self.txt_bon.setMaximumWidth(120)
         form.addRow("Descuentos :", self.txt_bon)
         self.txt_porcib = MontoLineEdit()
+        self.txt_porcib.setMaximumWidth(80)
         form.addRow("% I.B. :", self.txt_porcib)
         self.txt_totib = MontoLineEdit()
+        self.txt_totib.setMaximumWidth(120)
         form.addRow("Impte. I.B. :", self.txt_totib)
         self.txt_items = EnteroLineEdit("0")
+        self.txt_items.setMaximumWidth(70)
         form.addRow("Items :", self.txt_items)
         self.txt_totcan = EnteroLineEdit("0")
+        self.txt_totcan.setMaximumWidth(70)
         form.addRow("Tot.Unid. :", self.txt_totcan)
 
         return grupo

@@ -29,7 +29,7 @@ from __future__ import annotations
 from typing import Callable, Optional, TypeVar
 
 from PyQt6.QtCore import Qt, QThread, pyqtSignal
-from PyQt6.QtWidgets import QProgressDialog, QWidget
+from PyQt6.QtWidgets import QApplication, QProgressDialog, QWidget
 
 T = TypeVar("T")
 
@@ -85,6 +85,17 @@ def ejecutar_con_progreso(
     hilo.terminado.connect(_on_terminado)
     hilo.fallo.connect(_on_fallo)
     dialogo.canceled.connect(hilo.terminate)
+
+    # Se muestra y se pinta ANTES de arrancar el hilo (feedback del
+    # usuario, 2026-08-18, tercera ronda: "el aviso de que está
+    # procesando lo tenía y ahora no") — carrera real posible: si
+    # `funcion` es rápida, el hilo puede terminar (y `dialogo.close()`)
+    # en la primera vuelta del loop de eventos que abre `dialogo.exec()`,
+    # antes de que el diálogo llegue a pintarse en pantalla siquiera.
+    # `show()` + `processEvents()` fuerza el primer pintado ANTES de que
+    # el hilo tenga la chance de terminar.
+    dialogo.show()
+    QApplication.processEvents()
 
     hilo.start()
     dialogo.exec()

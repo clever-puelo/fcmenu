@@ -68,6 +68,9 @@ from PyQt6.QtWidgets import (
     QAbstractItemView,
     QComboBox,
     QDateEdit,
+    QFrame,
+    QHBoxLayout,
+    QLabel,
     QLineEdit,
     QPushButton,
     QSpinBox,
@@ -77,6 +80,28 @@ from PyQt6.QtWidgets import (
 )
 
 from .decimals import format_decimal, parse_decimal
+
+
+def crear_recuadro_destacado(etiqueta: str, texto_valor: str = "$ 0,00") -> tuple[QFrame, QLabel]:
+    """Recuadro con borde para resaltar un total dentro de una fila de
+    totales apretada a la izquierda (feedback del usuario, 2026-08-18,
+    tercera ronda: "Los totales están muy apretados a la izquierda...
+    resaltar Neto colocarlo en un recuadro" — mismo pedido repetido para
+    Totales de Facturación, "Venta Real"). Devuelve el frame ya armado
+    (para agregar a un layout con `addWidget`) y el `QLabel` del valor
+    (para poder actualizarlo después con `setText`)."""
+    frame = QFrame()
+    frame.setFrameShape(QFrame.Shape.Box)
+    frame.setStyleSheet("QFrame { border: 1px solid #888; border-radius: 6px; }")
+    fila = QHBoxLayout(frame)
+    fila.setContentsMargins(12, 4, 12, 4)
+    lbl_etiqueta = QLabel(etiqueta)
+    lbl_etiqueta.setStyleSheet("font-weight: bold; font-size: 12pt; border: none;")
+    fila.addWidget(lbl_etiqueta)
+    lbl_valor = QLabel(texto_valor)
+    lbl_valor.setStyleSheet("font-weight: bold; font-size: 12pt; border: none;")
+    fila.addWidget(lbl_valor)
+    return frame, lbl_valor
 
 
 def crear_boton_hoy(campo: QDateEdit) -> QPushButton:

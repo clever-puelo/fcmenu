@@ -71,6 +71,7 @@ from .decimals import format_decimal
 from .detalle_grid import DetalleGrid
 from .nota_cliente_dialog import NotaClienteDialog
 from .pdf_preview_dialog import PdfPreviewDialog
+from .widgets import crear_recuadro_destacado
 
 # CUIT del emisor — hardcodeado también en el legacy (`ConectaAFIP()`,
 # `WSFE.Cuit = "33703467909"`, empresa "ALESTEL SRL" ya confirmada en la
@@ -93,8 +94,8 @@ class FacturadorWindow(QMainWindow):
     def __init__(self, parent: QWidget | None = None, *, afip: Optional[NumeracionYCAEProvider] = None):
         super().__init__(parent)
         self.setWindowTitle("Facturador")
-        # +15% ancho (feedback del usuario, 2026-08-18, segunda ronda).
-        self.resize(1150, 700)
+        # +20% ancho más (feedback del usuario, 2026-08-18, tercera ronda).
+        self.resize(1380, 700)
 
         self.db = get_session()
         self.repos = RepositoryFactory(self.db)
@@ -135,10 +136,14 @@ class FacturadorWindow(QMainWindow):
         grupo = QGroupBox("Cabecera — Factura")
         layout = QVBoxLayout(grupo)
 
-        # Botón "Nota Clte." al extremo derecho, justo arriba de
-        # "Nueva" (feedback del usuario, 2026-08-18, segunda ronda) —
-        # queda último en la fila, igual que "Nueva" en `fila_datos`
-        # más abajo, así los dos quedan alineados en columna.
+        # "Nueva" subido a esta fila (antes vivía abajo) y "Nota Clte."
+        # corrido a su izquierda — quedan los dos juntos en la misma
+        # línea, al extremo derecho (feedback del usuario, 2026-08-18,
+        # tercera ronda: "Subir botón nueva y correr el botón nota clte
+        # a la izquierda... El botón se superpone ahora" — el apilado
+        # Próx.Nº/Letra + botón de la ronda anterior quedaba muy
+        # apretado en `fila_datos`, junto con Vendedor/Forma Ped./
+        # Dólares).
         fila_cliente = QHBoxLayout()
         self.btn_elegir_cliente = QPushButton(self.TEXTO_BTN_ELEGIR_CLIENTE)
         self.btn_elegir_cliente.clicked.connect(self._on_elegir_cliente)
@@ -149,8 +154,13 @@ class FacturadorWindow(QMainWindow):
         self.btn_nota_cliente.setEnabled(False)
         self.btn_nota_cliente.clicked.connect(self._on_nota_cliente)
         fila_cliente.addWidget(self.btn_nota_cliente)
+        self.btn_nueva = QPushButton("Nueva")
+        self.btn_nueva.clicked.connect(self._nueva_factura)
+        fila_cliente.addWidget(self.btn_nueva)
         layout.addLayout(fila_cliente)
 
+        # Abajo sólo queda "Próx. Nº" (+ "Letra", en la misma línea) —
+        # ya no compite por espacio con el botón "Nueva".
         fila_datos = QHBoxLayout()
         fila_datos.addWidget(QLabel("Vendedor :"))
         self.combo_vendedor = QComboBox()
@@ -167,20 +177,11 @@ class FacturadorWindow(QMainWindow):
         fila_datos.addWidget(self.chk_en_dolares)
 
         fila_datos.addStretch()
-        # "Letra" debajo de "Próx. Nº" (feedback del usuario, 2026-08-18,
-        # segunda ronda) — antes "Letra" vivía en `fila_cliente`, sin
-        # relación visual con el número de comprobante; ahora las dos
-        # quedan apiladas en una sola columna, justo antes de "Nueva".
-        bloque_numero = QVBoxLayout()
-        bloque_numero.setSpacing(0)
         self.lbl_proximo_numero = QLabel("Próx. Nº: —")
-        bloque_numero.addWidget(self.lbl_proximo_numero)
+        fila_datos.addWidget(self.lbl_proximo_numero)
+        fila_datos.addSpacing(16)
         self.lbl_letra = QLabel("Letra: —")
-        bloque_numero.addWidget(self.lbl_letra)
-        fila_datos.addLayout(bloque_numero)
-        self.btn_nueva = QPushButton("Nueva")
-        self.btn_nueva.clicked.connect(self._nueva_factura)
-        fila_datos.addWidget(self.btn_nueva)
+        fila_datos.addWidget(self.lbl_letra)
         layout.addLayout(fila_datos)
 
         self._cargar_vendedores()
@@ -258,13 +259,14 @@ class FacturadorWindow(QMainWindow):
         fila2.addWidget(self.lbl_percepcion_iibb)
         fila2.addStretch()
 
-        lbl_total_titulo = QLabel("TOTAL:")
-        lbl_total_titulo.setStyleSheet("font-weight: bold; font-size: 16pt;")
-        self.lbl_total = QLabel("$ 0,00")
-        self.lbl_total.setStyleSheet("font-weight: bold; font-size: 16pt;")
-        fila2.addWidget(lbl_total_titulo)
-        fila2.addWidget(self.lbl_total)
-        fila2.addSpacing(24)
+        # TOTAL centrado en la línea, dentro de un recuadro (feedback
+        # del usuario, 2026-08-18, tercera ronda: "El total colocarlo en
+        # la misma línea pero en el centro y dentro de un panel/
+        # recuadro") — el `addStretch()` de cada lado lo deja centrado
+        # entre Percepción IIBB (izquierda) y Emitir/Salir (derecha).
+        recuadro_total, self.lbl_total = crear_recuadro_destacado("TOTAL:")
+        fila2.addWidget(recuadro_total)
+        fila2.addStretch()
 
         self.btn_emitir = QPushButton("Emitir")
         self.btn_emitir.setStyleSheet("font-weight: bold; padding: 10px;")

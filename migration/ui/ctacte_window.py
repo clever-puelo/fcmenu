@@ -94,9 +94,9 @@ class CtaCteWindow(QMainWindow):
     def __init__(self, parent: QWidget | None = None):
         super().__init__(parent)
         self.setWindowTitle("Cuentas Corrientes")
-        # +15% ancho / +30% alto (feedback del usuario, 2026-08-18,
-        # segunda ronda).
-        self.resize(1518, 1123)
+        # +20% ancho / +20% alto (feedback del usuario, 2026-08-18,
+        # tercera ronda).
+        self.resize(1822, 1348)
 
         self.db = get_session()
         self.repos = RepositoryFactory(self.db)
@@ -187,6 +187,11 @@ class CtaCteWindow(QMainWindow):
         self.tabla_extracto = QTableWidget(0, len(COLUMNAS_EXTRACTO))
         self.tabla_extracto.setHorizontalHeaderLabels(COLUMNAS_EXTRACTO)
         self.tabla_extracto.verticalHeader().setVisible(False)
+        # Renglones más cortos para que entren más por pantalla (feedback
+        # del usuario, 2026-08-18, tercera ronda) — mismo criterio ya
+        # usado en `TablaBusqueda` (24px), acá un poco más chico todavía
+        # porque esta grilla no es de búsqueda sino de extracto largo.
+        self.tabla_extracto.verticalHeader().setDefaultSectionSize(22)
         self.tabla_extracto.setEditTriggers(QTableWidget.EditTrigger.NoEditTriggers)
         self.tabla_extracto.setSelectionBehavior(QTableWidget.SelectionBehavior.SelectRows)
         self.tabla_extracto.itemClicked.connect(self._on_click_fila_extracto)

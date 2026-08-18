@@ -32,7 +32,7 @@ from migration.services import TotalesDiariosService
 
 from .total_diario_detalle_dialog import TotalDiarioDetalleDialog
 from .total_mensual_dialog import TotalMensualDialog
-from .widgets import TablaBusqueda, crear_boton_hoy
+from .widgets import TablaBusqueda, crear_boton_hoy, crear_recuadro_destacado
 
 COLUMNAS = ["Fecha", "Precio de Venta", "Precio de Costo", "Venta Real", "Facturas", "N. Crédito"]
 COL_PVENTA, COL_PCOSTO, COL_VREAL, COL_FACTURAS, COL_NC = 1, 2, 3, 4, 5
@@ -44,8 +44,9 @@ class TotalesDiariosWindow(QMainWindow):
     def __init__(self, parent: QWidget | None = None):
         super().__init__(parent)
         self.setWindowTitle("Totales Diarios")
-        # +20% ancho / +50% alto (feedback del usuario, 2026-08-18).
-        self.resize(1140, 900)
+        # +10% ancho / +60% alto más (feedback del usuario, 2026-08-18,
+        # tercera ronda).
+        self.resize(1254, 1440)
 
         self.db = get_session()
         self.repos = RepositoryFactory(self.db)
@@ -87,17 +88,20 @@ class TotalesDiariosWindow(QMainWindow):
         self.tabla = TablaBusqueda(COLUMNAS, columnas_derecha=(COL_PVENTA, COL_PCOSTO, COL_VREAL, COL_FACTURAS, COL_NC))
         layout.addWidget(self.tabla, stretch=1)
 
+        # Totales separados y "Venta Real" resaltada en un recuadro
+        # (feedback del usuario, 2026-08-18, tercera ronda — mismo
+        # tratamiento pedido para Facturas Emitidas).
         fila_totales = QHBoxLayout()
         fila_totales.addWidget(QLabel("Precio Venta :"))
         self.lbl_pvta = QLabel("$ 0,00")
         fila_totales.addWidget(self.lbl_pvta)
+        fila_totales.addSpacing(30)
         fila_totales.addWidget(QLabel("Precio Costo :"))
         self.lbl_pcos = QLabel("$ 0,00")
         fila_totales.addWidget(self.lbl_pcos)
-        fila_totales.addWidget(QLabel("Venta Real :"))
-        self.lbl_pesp = QLabel("$ 0,00")
-        self.lbl_pesp.setStyleSheet("font-weight: bold;")
-        fila_totales.addWidget(self.lbl_pesp)
+        fila_totales.addSpacing(30)
+        recuadro_venta_real, self.lbl_pesp = crear_recuadro_destacado("Venta Real :")
+        fila_totales.addWidget(recuadro_venta_real)
         fila_totales.addStretch()
         layout.addLayout(fila_totales)
 

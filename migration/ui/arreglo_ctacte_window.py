@@ -48,8 +48,9 @@ class ArregloCtaCteWindow(QMainWindow):
     def __init__(self, parent: QWidget | None = None):
         super().__init__(parent)
         self.setWindowTitle("Arreglos — Cuenta Corriente")
-        # +50% ancho (feedback del usuario, 2026-08-18, segunda ronda).
-        self.resize(780, 480)
+        # +50% ancho más (feedback del usuario, 2026-08-18, tercera
+        # ronda — repitió el mismo pedido).
+        self.resize(1170, 480)
 
         self.db = get_session()
         self.repos = RepositoryFactory(self.db)
@@ -66,9 +67,16 @@ class ArregloCtaCteWindow(QMainWindow):
 
         form = QFormLayout()
 
+        # Campos acordes al tamaño de los datos que se van a ingresar
+        # (feedback del usuario, 2026-08-18, tercera ronda) — por
+        # defecto `QFormLayout` estira cada campo a todo el ancho de la
+        # fila (`AllNonFixedFieldsGrow`), así que un código de 6 dígitos
+        # quedaba tan ancho como toda la ventana. Se topea cada uno a un
+        # ancho acorde a su contenido real.
         self.spin_clte = QSpinBox()
         self.spin_clte.setRange(0, 999999)
         self.spin_clte.setButtonSymbols(QSpinBox.ButtonSymbols.NoButtons)
+        self.spin_clte.setMaximumWidth(90)
         # Botón de búsqueda de Cliente (feedback del usuario, 2026-08-18,
         # segunda ronda) — hasta ahora había que saber el código de
         # memoria y tipearlo a mano; mismo buscador modal ya usado en
@@ -85,24 +93,30 @@ class ArregloCtaCteWindow(QMainWindow):
         self.fecha = QDateEdit()
         self.fecha.setCalendarPopup(True)
         self.fecha.setDate(QDate.currentDate())
+        self.fecha.setMaximumWidth(110)
         fila_fecha = QHBoxLayout()
         fila_fecha.addWidget(self.fecha)
         fila_fecha.addWidget(crear_boton_hoy(self.fecha))
+        fila_fecha.addStretch()
         form.addRow("Fecha :", fila_fecha)
 
         self.combo_tipo = QComboBox()
         for codigo, etiqueta in TIPOS_CPBTE:
             self.combo_tipo.addItem(f"{codigo}-{etiqueta}", codigo)
+        self.combo_tipo.setMaximumWidth(220)
         form.addRow("Tipo Cpbte. :", self.combo_tipo)
 
         self.combo_letra = QComboBox()
         self.combo_letra.addItems(LETRAS)
+        self.combo_letra.setMaximumWidth(70)
         form.addRow("Letra :", self.combo_letra)
 
         self.txt_prefijo = EnteroLineEdit("0001")
+        self.txt_prefijo.setMaximumWidth(70)
         form.addRow("Prefijo (Pto.Vta.) :", self.txt_prefijo)
 
         self.txt_cpbte = EnteroLineEdit()
+        self.txt_cpbte.setMaximumWidth(90)
         form.addRow("Nro. Cpbte. :", self.txt_cpbte)
 
         self.lbl_estado = QLabel()
@@ -111,28 +125,35 @@ class ArregloCtaCteWindow(QMainWindow):
 
         self.txt_imput1 = UpperCaseLineEdit()
         self.txt_imput1.setMaxLength(20)
+        self.txt_imput1.setMaximumWidth(170)
         form.addRow("1ª Imputación :", self.txt_imput1)
 
         self.txt_imput2 = UpperCaseLineEdit()
         self.txt_imput2.setMaxLength(20)
+        self.txt_imput2.setMaximumWidth(170)
         form.addRow("2ª Imputación :", self.txt_imput2)
 
         self.txt_imput3 = UpperCaseLineEdit()
         self.txt_imput3.setMaxLength(20)
+        self.txt_imput3.setMaximumWidth(170)
         form.addRow("3ª Imputación :", self.txt_imput3)
 
         self.txt_debe = MontoLineEdit()
+        self.txt_debe.setMaximumWidth(120)
         form.addRow("Resto (Debe) :", self.txt_debe)
 
         self.txt_impte = MontoLineEdit()
+        self.txt_impte.setMaximumWidth(120)
         form.addRow("Importe :", self.txt_impte)
 
         self.fecvto = QDateEdit()
         self.fecvto.setCalendarPopup(True)
         self.fecvto.setDate(QDate.currentDate())
+        self.fecvto.setMaximumWidth(110)
         fila_fecvto = QHBoxLayout()
         fila_fecvto.addWidget(self.fecvto)
         fila_fecvto.addWidget(crear_boton_hoy(self.fecvto))
+        fila_fecvto.addStretch()
         form.addRow("Fec. Vto. :", fila_fecvto)
 
         layout.addLayout(form)

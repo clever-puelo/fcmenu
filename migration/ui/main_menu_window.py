@@ -45,6 +45,7 @@ from PyQt6.QtWidgets import (
     QLabel,
     QMainWindow,
     QMdiArea,
+    QMdiSubWindow,
     QMessageBox,
     QPushButton,
     QSizePolicy,
@@ -78,6 +79,21 @@ ALTO_BARRA_TAREAS_2_FILAS = 2 * (ALTO_BARRA_TAREAS - 12) + 10
 # principal a crecer más allá del monitor).
 MAX_BOTONES_UNA_FILA = 9
 
+# Posicionamiento de subventanas del MDI (feedback del usuario,
+# 2026-08-18, tercera ronda: "quedaría más agradable si las ventanas/
+# módulos aparecen en el centro del panel principal y no en el extremo
+# superior izquierdo" — antes `QMdiArea.cascadeSubWindows()`). Listados
+# pidió un margen puntual en mm en vez de centrado simple ("a 30mm por
+# lado lateral y a 50mm de arriba") — aproximado a 96 DPI, suficiente
+# para un margen visual dentro de una subventana, no para impresión.
+PX_POR_MM = 96 / 25.4
+MARGEN_LISTADOS_LATERAL_MM = 30
+MARGEN_LISTADOS_SUPERIOR_MM = 50
+
+
+def _mm_a_px(mm: float) -> int:
+    return round(mm * PX_POR_MM)
+
 
 def _envolver_en_dos_lineas(texto: str, fuente: QFont, ancho_disponible: int) -> str:
     """Si `texto` no entra en una línea dentro de `ancho_disponible`
@@ -109,13 +125,18 @@ def _envolver_en_dos_lineas(texto: str, fuente: QFont, ancho_disponible: int) ->
 class MainMenuWindow(QMainWindow):
     def __init__(self) -> None:
         super().__init__()
-        self.setWindowTitle("FCMENU  —  Facturación y Cuenta Corriente (Electrónica)")
+        # "FCMENU" -> "FcMenu II" en todo lo visible (feedback del
+        # usuario, 2026-08-18, tercera ronda).
+        self.setWindowTitle("FcMenu II  —  Facturación y Cuenta Corriente (Electrónica)")
         self.setWindowIcon(icono_app())
         self.resize(1280, 820)
 
         self.db = get_session()
         self.repos = RepositoryFactory(self.db)
         self._seccion_actual: str | None = None
+        # Subventanas abiertas por (sección, etiqueta) — evita disparar
+        # el mismo módulo 2 veces (ver `_ejecutar_tarea`).
+        self._ventanas_por_clave: dict[tuple[str, str], QMdiSubWindow] = {}
 
         self._construir_ui()
         self._ajustar_proporciones()
@@ -193,11 +214,14 @@ class MainMenuWindow(QMainWindow):
 
         bloque_titulo = QVBoxLayout()
         bloque_titulo.setSpacing(0)
-        lbl_titulo = QLabel("FCMENU")
+        lbl_titulo = QLabel("FcMenu II")
         lbl_titulo.setStyleSheet(f"color: {Verde.BLANCO}; font-size: 22pt; font-weight: bold;")
         lbl_subtitulo = QLabel("Facturación y Cuenta Corriente (Electrónica)")
         lbl_subtitulo.setStyleSheet(f"color: {Verde.PASTEL}; font-size: 9.5pt;")
-        lbl_version = QLabel(f"Versión {VERSION_APP}")
+        # "FcMenu II - Versión 2.0" (feedback del usuario, 2026-08-18,
+        # tercera ronda: "donde dice Versión 2.0 diga FCMENU - Versión
+        # 2.0" — combinado con el rename de "FCMENU" a "FcMenu II").
+        lbl_version = QLabel(f"FcMenu II - Versión {VERSION_APP}")
         lbl_version.setStyleSheet(f"color: {Verde.MEDIO_CLARO}; font-size: 8.5pt;")
         bloque_titulo.addWidget(lbl_titulo)
         bloque_titulo.addWidget(lbl_subtitulo)
@@ -474,8 +498,25 @@ class MainMenuWindow(QMainWindow):
         `_mostrar()` la use como título de la subventana que se abra
         (si el callback abre una) — "el título tiene que decir la
         opción elegida (Facturador, ABM Cliente, etc.), no el nombre
-        interno de la pantalla" (feedback del usuario, 2026-08-16)."""
+        interno de la pantalla" (feedback del usuario, 2026-08-16).
+
+        **No permite disparar el mismo módulo 2 veces** (feedback del
+        usuario, 2026-08-18, tercera ronda: "si un módulo se está
+        ejecutando no se pueda disparar nuevamente... avise y no
+        permita") — se identifica cada módulo por (sección, etiqueta),
+        estable entre reconstrucciones de `_secciones()` (a diferencia
+        de `id(callback)`: los callbacks de Listados son lambdas
+        nuevas cada vez que se reconstruye la barra de tareas). Si ya
+        hay una subventana abierta con esa clave, se la trae al frente
+        en vez de abrir una segunda."""
+        clave = (self._seccion_actual, etiqueta)
+        existente = self._ventanas_por_clave.get(clave)
+        if existente is not None:
+            self.mdi.setActiveSubWindow(existente)
+            self.mostrar_mensaje(f"'{etiqueta}' ya está abierto — no se abre de nuevo.", nivel="info")
+            return
         self._titulo_tarea_actual = etiqueta
+        self._clave_tarea_actual = clave
         callback()
 
     # ------------------------------------------------------------------
@@ -632,7 +673,7 @@ class MainMenuWindow(QMainWindow):
             ],
             # Sección nueva (feedback del usuario, 2026-08-17).
             "Ayuda": [
-                ("acerca_de", "Acerca de FCMENU II", self._abrir_acerca_de),
+                ("acerca_de", "Acerca de FcMenu II", self._abrir_acerca_de),
                 ("referencias", "Referencias", self._abrir_referencias),
                 ("manual", "Manual", self._abrir_manual),
                 ("sitio_web", "Sitio Alestel", self._abrir_sitio_web),
@@ -648,7 +689,14 @@ class MainMenuWindow(QMainWindow):
         # 2026-08-16. `_ejecutar_tarea` deja la etiqueta del botón
         # clickeado en `_titulo_tarea_actual` justo antes de invocar el
         # callback que termina llamando acá.
-        titulo = getattr(self, "_titulo_tarea_actual", None) or ventana.windowTitle() or "Ventana"
+        #
+        # Prefijo con el título principal de la sección (feedback del
+        # usuario, 2026-08-18, tercera ronda: "Consultas - Cuenta
+        # Corriente" / "Ingreso - Recibos") — `self._seccion_actual` es
+        # la misma sección activa que armó la barra de tareas que llevó
+        # a este callback.
+        titulo_tarea = getattr(self, "_titulo_tarea_actual", None) or ventana.windowTitle() or "Ventana"
+        titulo = f"{self._seccion_actual} - {titulo_tarea}" if self._seccion_actual else titulo_tarea
         ventana.setWindowTitle(titulo)
         # Sin esto, QMdiSubWindow sólo se oculta al cerrar (no se destruye
         # de verdad) — cada pantalla abre su propia sesión de BD
@@ -678,13 +726,45 @@ class MainMenuWindow(QMainWindow):
 
         ventana.closeEvent = _cerrar_tambien_subventana
 
+        # Registro para no permitir 2 instancias del mismo módulo a la
+        # vez (ver `_ejecutar_tarea`) — se limpia solo al cerrarse de
+        # verdad. `_clave_tarea_actual` sólo existe cuando `_mostrar()`
+        # se llamó desde un callback de la barra de tareas (todos los
+        # casos reales de la app) — si algún día se llama desde otro
+        # lado, simplemente no participa de la deduplicación.
+        clave = getattr(self, "_clave_tarea_actual", None)
+        if clave is not None:
+            self._ventanas_por_clave[clave] = subventana
+            subventana.destroyed.connect(lambda: self._ventanas_por_clave.pop(clave, None))
+
         subventana.destroyed.connect(lambda: self.mostrar_mensaje(f"Se cerró: {titulo}"))
         subventana.show()
         self.mdi.setActiveSubWindow(subventana)
-        # Cascada (probado 2026-08-16 en vez de pestañas): cada pantalla
-        # nueva se ve completa, no tapada exactamente por la anterior.
-        self.mdi.cascadeSubWindows()
+        self._posicionar_subventana(subventana, ventana)
         self.mostrar_mensaje(f"Se abrió: {titulo}", nivel="ok")
+
+    def _posicionar_subventana(self, subventana: QMdiSubWindow, ventana: QWidget) -> None:
+        """Centrada en el panel principal en vez de en cascada desde el
+        extremo superior izquierdo (feedback del usuario, 2026-08-18,
+        tercera ronda: "quedaría más agradable si las ventanas/módulos
+        aparecen en el centro del panel principal"). Listados pidió un
+        margen puntual en mm en vez de centrado simple por tamaño ("a
+        30mm por lado lateral y a 50mm de arriba") — acá se interpreta
+        "en el centro... a 30mm/50mm" como simétrico (30mm también a
+        los costados, 50mm también abajo), no sólo un ancho fijo pegado
+        arriba."""
+        area = self.mdi.viewport().size()
+        if type(ventana).__name__ == "ListadosWindow":
+            margen_lateral = _mm_a_px(MARGEN_LISTADOS_LATERAL_MM)
+            margen_superior = _mm_a_px(MARGEN_LISTADOS_SUPERIOR_MM)
+            ancho = max(area.width() - 2 * margen_lateral, 300)
+            alto = max(area.height() - 2 * margen_superior, 300)
+            subventana.resize(ancho, alto)
+            subventana.move(margen_lateral, margen_superior)
+            return
+        x = max((area.width() - subventana.width()) // 2, 0)
+        y = max((area.height() - subventana.height()) // 2, 0)
+        subventana.move(x, y)
 
     # -- A-B-M's --------------------------------------------------------
     def _abrir_clientes(self) -> None:
@@ -882,10 +962,24 @@ class MainMenuWindow(QMainWindow):
 
         PdfPreviewDialog(ruta_pdf, titulo="Referencias — Tips y Ayudamemorias", parent=self).exec()
 
+    # Manual real ya generado por el usuario en `assets/docs/` (pedido
+    # del usuario, 2026-08-18, tercera ronda: "el manual del usuario
+    # está en assets\docs... ya se puede conectar") — mismo patrón que
+    # `RUTA_LISTA_PRECIOS_PDF`, pero ESTA sí vive dentro del proyecto
+    # (`Path(__file__)` en vez de una ruta fija fuera de él).
+    RUTA_MANUAL_USUARIO_PDF = Path(__file__).resolve().parent.parent.parent / "assets" / "docs" / "Manual_Usuario_FCMENU.pdf"
+
     def _abrir_manual(self) -> None:
-        """Manual estructurado — pendiente, "lo haremos al final"
-        (pedido del usuario, 2026-08-17)."""
-        QMessageBox.information(self, "Manual", "El Manual estructurado está en proceso ...")
+        from .pdf_preview_dialog import PdfPreviewDialog
+
+        if not self.RUTA_MANUAL_USUARIO_PDF.exists():
+            QMessageBox.warning(
+                self,
+                "Manual",
+                f"No se encontró el archivo:\n{self.RUTA_MANUAL_USUARIO_PDF}",
+            )
+            return
+        PdfPreviewDialog(self.RUTA_MANUAL_USUARIO_PDF, titulo="Manual del Usuario", parent=self).exec()
 
     def _abrir_sitio_web(self) -> None:
         QDesktopServices.openUrl(QUrl("https://www.alestel.com.ar"))

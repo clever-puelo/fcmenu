@@ -31,7 +31,7 @@ from migration.repository import RepositoryFactory
 from migration.services import FacturasEmitidasService
 
 from .factura_emitida_detalle_dialog import FacturaEmitidaDetalleDialog
-from .widgets import TablaBusqueda, crear_boton_hoy
+from .widgets import TablaBusqueda, crear_boton_hoy, crear_recuadro_destacado
 
 # Cód. de Cliente en columna separada de la Razón Social (feedback del
 # usuario, 2026-08-18, segunda ronda: "para poder ordenar
@@ -49,9 +49,10 @@ class FacturasEmitidasWindow(QMainWindow):
     def __init__(self, parent: QWidget | None = None):
         super().__init__(parent)
         self.setWindowTitle("Facturas Emitidas")
-        # +30% ancho / +60% alto (feedback del usuario, 2026-08-18,
-        # segunda ronda).
-        self.resize(2730, 1440)
+        # +30% ancho / +60% alto más (feedback del usuario, 2026-08-18,
+        # tercera ronda — el usuario repitió el mismo pedido, confirmó
+        # sumarlo de nuevo).
+        self.resize(3549, 2304)
 
         self.db = get_session()
         self.repos = RepositoryFactory(self.db)
@@ -90,17 +91,19 @@ class FacturasEmitidasWindow(QMainWindow):
         self.tabla = TablaBusqueda(COLUMNAS, columnas_derecha=(COL_BRUTO, COL_IVA, COL_NETO, COL_COD_CLIENTE))
         layout.addWidget(self.tabla, stretch=1)
 
+        # Totales separados (no pegados a la izquierda) y "Neto" resaltado
+        # en un recuadro (feedback del usuario, 2026-08-18, tercera ronda).
         fila_totales = QHBoxLayout()
         fila_totales.addWidget(QLabel("Bruto :"))
         self.lbl_bruto = QLabel("$ 0,00")
         fila_totales.addWidget(self.lbl_bruto)
+        fila_totales.addSpacing(30)
         fila_totales.addWidget(QLabel("IVA :"))
         self.lbl_iva = QLabel("$ 0,00")
         fila_totales.addWidget(self.lbl_iva)
-        fila_totales.addWidget(QLabel("Neto :"))
-        self.lbl_neto = QLabel("$ 0,00")
-        self.lbl_neto.setStyleSheet("font-weight: bold;")
-        fila_totales.addWidget(self.lbl_neto)
+        fila_totales.addSpacing(30)
+        recuadro_neto, self.lbl_neto = crear_recuadro_destacado("Neto :")
+        fila_totales.addWidget(recuadro_neto)
         fila_totales.addStretch()
         layout.addLayout(fila_totales)
 

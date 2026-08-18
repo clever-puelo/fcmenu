@@ -41,7 +41,7 @@ AUTOR = "Clever G. Colalillo"
 class AcercaDeDialog(QDialog):
     def __init__(self, parent: QWidget | None = None):
         super().__init__(parent)
-        self.setWindowTitle("Acerca de FCMENU II")
+        self.setWindowTitle("Acerca de FcMenu II")
         self.setFixedSize(420, 420)
 
         layout = QVBoxLayout(self)
@@ -100,7 +100,7 @@ class AcercaDeDialog(QDialog):
             lbl_logo.setAlignment(Qt.AlignmentFlag.AlignCenter)
             layout.addWidget(lbl_logo)
 
-        lbl_titulo = QLabel("FCMENU")
+        lbl_titulo = QLabel("FcMenu II")
         lbl_titulo.setStyleSheet(
             f"color: {Verde.BLANCO}; font-family: 'Times New Roman'; font-size: 30pt; font-weight: bold;"
         )
