@@ -1,0 +1,448 @@
+[Root]
+Most Recent Package=Paquete de instalación
+
+
+[Package|Paquete de instalación estándar 1|Root]
+SubWizProgID=PDWizard.SetupPkgSubWiz
+BuildFolder=C:\Sistema\Alestel\Paquete
+
+[Package|Paquete de instalación estándar 1|Configure DAO ISAMs]
+Applicable=No
+
+[Package|Paquete de instalación estándar 1|Configure DAO ODBC]
+JetWorkspace=
+ODBCDirect=
+
+[Package|Paquete de instalación estándar 1|Files Found]
+
+[Package|Paquete de instalación estándar 1|Files Released]
+rlocal32.DLL=
+Radmin32.dll=
+
+[Package|Paquete de instalación estándar 1|Missing Dependency Information]
+C:\WINDOWS\system32\vsvport8.ocx=
+C:\WINDOWS\system32\vsrpt8.ocx=
+C:\WINDOWS\system32\vsprint8.ocx=
+C:\Archivos de programa\Archivos comunes\Designer\MSCONDES.DLL=
+C:\WINDOWS\system32\vsflex8.ocx=
+C:\WINDOWS\system32\odbccp32.dll=
+C:\Sistema\Alestel\RADMIN32.DLL=
+C:\Archivos de programa\Archivos comunes\System\ado\msadox.dll=
+C:\WINDOWS\system32\msadox.dll=
+
+[Package|Paquete de instalación estándar 1|Out-of-Date Dependency Information]
+C:\WINDOWS\system32\MSCAL.OCX=
+
+[Package|Paquete de instalación estándar 1|Files Added]
+
+[Package|Paquete de instalación estándar 1|Files Removed]
+
+[Package|Paquete de instalación estándar 1|Files In Project]
+C:\Sistema\Alestel\FCMENU.exe=Yes
+C:\WINDOWS\system32\msvbvm60.dll=Yes
+C:\Archivos de programa\Microsoft Visual Studio\VB98\Wizards\PDWizard\Redist\OLEAUT32.DLL=Yes
+C:\Archivos de programa\Microsoft Visual Studio\VB98\Wizards\PDWizard\Redist\OLEPRO32.DLL=Yes
+C:\Archivos de programa\Microsoft Visual Studio\VB98\Wizards\PDWizard\Redist\ASYCFILT.DLL=Yes
+C:\Archivos de programa\Microsoft Visual Studio\VB98\Wizards\PDWizard\Redist\STDOLE2.TLB=Yes
+C:\Archivos de programa\Microsoft Visual Studio\VB98\Wizards\PDWizard\Redist\COMCAT.DLL=Yes
+C:\WINDOWS\system32\vb6es.dll=Yes
+C:\WINDOWS\system32\odbccp32.dll=Yes
+C:\Archivos de programa\Archivos comunes\Microsoft Shared\DAO\dao360.dll=Yes
+C:\WINDOWS\system32\msjet40.dll=Yes
+C:\WINDOWS\system32\msjter40.dll=Yes
+C:\WINDOWS\system32\msjint40.dll=Yes
+C:\WINDOWS\system32\vbajet32.dll=Yes
+C:\WINDOWS\system32\expsrv.dll=Yes
+C:\WINDOWS\system32\mswstr10.dll=Yes
+C:\WINDOWS\system32\mswdat10.dll=Yes
+C:\WINDOWS\system32\msrd2x40.dll=Yes
+C:\WINDOWS\system32\msrd3x40.dll=Yes
+C:\WINDOWS\system32\msrepl40.dll=Yes
+C:\WINDOWS\system32\msjtes40.dll=Yes
+C:\WINDOWS\system32\VB5DB.DLL=Yes
+C:\WINDOWS\system32\MSBIND.DLL=Yes
+C:\WINDOWS\system32\msstdfmt.dll=Yes
+C:\WINDOWS\system32\stdftes.dll=Yes
+C:\WINDOWS\system32\vsflex8.ocx=Yes
+C:\Archivos de programa\Archivos comunes\Designer\MSCDRUN.DLL=Yes
+C:\WINDOWS\system32\MSRDO20.DLL=Yes
+C:\WINDOWS\system32\RDOCURS.DLL=Yes
+C:\WINDOWS\system32\RDO20ES.DLL=Yes
+C:\Archivos de programa\Archivos comunes\Designer\CONNDES.DLL=Yes
+C:\Archivos de programa\Archivos comunes\Designer\MSCONDES.DLL=Yes
+C:\WINDOWS\system32\MSCOMCTL.OCX=Yes
+C:\WINDOWS\system32\MSCMCES.DLL=Yes
+C:\WINDOWS\system32\MSCAL.OCX=Yes
+C:\WINDOWS\system32\MSADODC.OCX=Yes
+C:\WINDOWS\system32\ADODCES.DLL=Yes
+C:\WINDOWS\system32\MSDATGRD.OCX=Yes
+C:\WINDOWS\system32\DATGDES.DLL=Yes
+C:\WINDOWS\system32\MSCOMCT2.OCX=Yes
+C:\WINDOWS\system32\MSCC2ES.DLL=Yes
+C:\WINDOWS\system32\MSDATLST.OCX=Yes
+C:\WINDOWS\system32\DATLSES.DLL=Yes
+C:\WINDOWS\system32\vsprint8.ocx=Yes
+C:\WINDOWS\system32\vsrpt8.ocx=Yes
+C:\WINDOWS\system32\vsvport8.ocx=Yes
+C:\Archivos de programa\Microsoft Visual Studio\VB98\Wizards\PDWizard\Redist\MDAC_TYP.EXE=Yes
+C:\Archivos de programa\Microsoft Visual Studio\VB98\Wizards\PDWizard\SETUP.EXE=Yes
+C:\Archivos de programa\Microsoft Visual Studio\VB98\Wizards\PDWizard\SETUP1.EXE=Yes
+C:\WINDOWS\system32\VB6STKIT.DLL=Yes
+C:\Archivos de programa\Microsoft Visual Studio\VB98\Wizards\PDWizard\ST6UNST.EXE=Yes
+C:\WINDOWS\system32\msadox.dll=Yes
+
+[Package|Paquete de instalación estándar 1|Configure Registry Files]
+Applicable=No
+
+[Package|Paquete de instalación estándar 1|Configure Remote Servers]
+Applicable=No
+
+[Package|Paquete de instalación estándar 1|Install Locations]
+C:\Sistema\Alestel\FCMENU.exe=$(AppPath)
+C:\WINDOWS\system32\msvbvm60.dll=$(WinSysPathSysFile)
+C:\Archivos de programa\Microsoft Visual Studio\VB98\Wizards\PDWizard\Redist\OLEAUT32.DLL=$(WinSysPathSysFile)
+C:\Archivos de programa\Microsoft Visual Studio\VB98\Wizards\PDWizard\Redist\OLEPRO32.DLL=$(WinSysPathSysFile)
+C:\Archivos de programa\Microsoft Visual Studio\VB98\Wizards\PDWizard\Redist\ASYCFILT.DLL=$(WinSysPathSysFile)
+C:\Archivos de programa\Microsoft Visual Studio\VB98\Wizards\PDWizard\Redist\STDOLE2.TLB=$(WinSysPathSysFile)
+C:\Archivos de programa\Microsoft Visual Studio\VB98\Wizards\PDWizard\Redist\COMCAT.DLL=$(WinSysPathSysFile)
+C:\WINDOWS\system32\vb6es.dll=$(WinSysPath)
+C:\WINDOWS\system32\odbccp32.dll=$(WinSysPath)
+C:\Archivos de programa\Archivos comunes\Microsoft Shared\DAO\dao360.dll=$(MSDAOPath)
+C:\WINDOWS\system32\msjet40.dll=$(WinSysPathSysFile)
+C:\WINDOWS\system32\msjter40.dll=$(WinSysPathSysFile)
+C:\WINDOWS\system32\msjint40.dll=$(WinSysPathSysFile)
+C:\WINDOWS\system32\vbajet32.dll=$(WinSysPathSysFile)
+C:\WINDOWS\system32\expsrv.dll=$(WinSysPathSysFile)
+C:\WINDOWS\system32\mswstr10.dll=$(WinSysPathSysFile)
+C:\WINDOWS\system32\mswdat10.dll=$(WinSysPathSysFile)
+C:\WINDOWS\system32\msrd2x40.dll=$(WinSysPathSysFile)
+C:\WINDOWS\system32\msrd3x40.dll=$(WinSysPathSysFile)
+C:\WINDOWS\system32\msrepl40.dll=$(WinSysPathSysFile)
+C:\WINDOWS\system32\msjtes40.dll=$(WinSysPathSysFile)
+C:\WINDOWS\system32\VB5DB.DLL=$(WinSysPath)
+C:\WINDOWS\system32\MSBIND.DLL=$(WinSysPath)
+C:\WINDOWS\system32\msstdfmt.dll=$(WinSysPath)
+C:\WINDOWS\system32\stdftes.dll=$(WinSysPath)
+C:\WINDOWS\system32\vsflex8.ocx=$(WinSysPath)
+C:\Archivos de programa\Archivos comunes\Designer\MSCDRUN.DLL=$(CommonFiles)\Designer
+C:\WINDOWS\system32\MSRDO20.DLL=$(WinSysPath)
+C:\WINDOWS\system32\RDOCURS.DLL=$(WinSysPath)
+C:\WINDOWS\system32\RDO20ES.DLL=$(WinSysPath)
+C:\Archivos de programa\Archivos comunes\Designer\CONNDES.DLL=$(WinSysPath)
+C:\Archivos de programa\Archivos comunes\Designer\MSCONDES.DLL=$(WinSysPath)
+C:\WINDOWS\system32\MSCOMCTL.OCX=$(WinSysPath)
+C:\WINDOWS\system32\MSCMCES.DLL=$(WinSysPath)
+C:\WINDOWS\system32\MSCAL.OCX=$(WinSysPath)
+C:\WINDOWS\system32\MSADODC.OCX=$(WinSysPath)
+C:\WINDOWS\system32\ADODCES.DLL=$(WinSysPath)
+C:\WINDOWS\system32\MSDATGRD.OCX=$(WinSysPath)
+C:\WINDOWS\system32\DATGDES.DLL=$(WinSysPath)
+C:\WINDOWS\system32\MSCOMCT2.OCX=$(WinSysPath)
+C:\WINDOWS\system32\MSCC2ES.DLL=$(WinSysPath)
+C:\WINDOWS\system32\MSDATLST.OCX=$(WinSysPath)
+C:\WINDOWS\system32\DATLSES.DLL=$(WinSysPath)
+C:\WINDOWS\system32\vsprint8.ocx=$(WinSysPath)
+C:\WINDOWS\system32\vsrpt8.ocx=$(WinSysPath)
+C:\WINDOWS\system32\vsvport8.ocx=$(WinSysPath)
+C:\Archivos de programa\Microsoft Visual Studio\VB98\Wizards\PDWizard\Redist\MDAC_TYP.EXE=$(AppPath)
+C:\Archivos de programa\Microsoft Visual Studio\VB98\Wizards\PDWizard\SETUP.EXE=$(AppPath)
+C:\Archivos de programa\Microsoft Visual Studio\VB98\Wizards\PDWizard\SETUP1.EXE=$(WinPath)
+C:\WINDOWS\system32\VB6STKIT.DLL=$(WinSysPathSysFile)
+C:\Archivos de programa\Microsoft Visual Studio\VB98\Wizards\PDWizard\ST6UNST.EXE=$(WinPath)
+C:\Sistema\Alestel\RADMIN32.DLL=$(WinSysPath)
+C:\Archivos de programa\Archivos comunes\System\ado\msadox.dll=$(WinSysPath)
+C:\WINDOWS\system32\ARPopUpMenu.ocx=$(WinSysPath)
+C:\WINDOWS\system32\msadox.dll=$(WinSysPath)
+
+[Package|Paquete de instalación estándar 1|Configure Shared Files]
+Applicable=Yes
+C:\Sistema\Alestel\FCMENU.exe=Yes
+C:\Archivos de programa\Microsoft Visual Studio\VB98\Wizards\PDWizard\Redist\MDAC_TYP.EXE=Yes
+
+[Package|Paquete de instalación estándar 1|Distribution]
+Type=single
+Size=1.44 MB
+Title=FCMENU
+
+[Package|Paquete de instalación estándar 1|IconGroups]
+Group0=FCMENU
+PrivateGroup0=-1
+Parent0=$(Programs)
+
+[Package|Paquete de instalación estándar 1|FCMENU]
+Icon1=FCMENU.exe /PV:0001
+Title1=FCMENU
+StartIn1=$(AppPath)
+Key1=Icon1
+
+[Package|Paquete de instalación estándar 1|Package]
+PackageFolder=C:\Sistema\Alestel\Paquete
+ProjectFolder=C:\Sistema\Alestel
+ServerSideCab=
+File1=C:\Sistema\Alestel\Paquete\setup.exe
+File2=C:\Sistema\Alestel\Paquete\Setup.Lst
+File3=C:\Sistema\Alestel\Paquete\FCMENU.CAB
+Handler1=PDWizard.FolderDplySubWiz
+Handler2=PDWizard.WebPostDplySubWiz
+
+
+[Package|Paquete de instalación|Root]
+SubWizProgID=PDWizard.SetupPkgSubWiz
+BuildFolder=c:\Temp\Alestel
+
+[Package|Paquete de instalación|Configure DAO ISAMs]
+Applicable=No
+
+[Package|Paquete de instalación|Configure DAO ODBC]
+JetWorkspace=
+ODBCDirect=
+
+[Package|Paquete de instalación|Files Found]
+
+[Package|Paquete de instalación|Files Released]
+rlocal32.DLL=
+Radmin32.dll=
+AcroPDF.dll=
+
+[Package|Paquete de instalación|Missing Dependency Information]
+C:\WINDOWS\system32\vsvport8.ocx=
+C:\WINDOWS\system32\vsrpt8.ocx=
+C:\WINDOWS\system32\vsprint8.ocx=
+C:\Archivos de programa\Archivos comunes\Designer\MSCONDES.DLL=
+C:\WINDOWS\system32\vsflex8.ocx=
+C:\WINDOWS\system32\odbccp32.dll=
+C:\Sistema\Alestel\RADMIN32.DLL=
+C:\Archivos de programa\Archivos comunes\System\ado\msadox.dll=
+C:\WINDOWS\system32\msadox.dll=
+C:\Sistema\Alestel\MSCAL.OCX=
+C:\Archivos de programa\Chilkat Software Inc\Chilkat Mail ActiveX\ChilkatMail2.dll=
+C:\Archivos de programa\dLSoft\AbcITF\abcitf.ocx=
+C:\Archivos de programa\Foxit Software\Foxit Reader\Foxit Reader.exe=
+C:\WINDOWS\system32\vspdf8.ocx=
+C:\WINDOWS\system32\hpm_System32\MSSTDFMT.DLL=
+C:\WINDOWS\system32\hpm_System32\MSBIND.DLL=
+C:\Archivos de programa\aTube Catcher\mscomctl.OCX=
+C:\WINDOWS\system32\ChilkatMail2.dll=
+C:\WINDOWS\SQLite2009Pro\msstdfmt.dll=
+C:\WINDOWS\SQLite2009Pro\msbind.dll=
+C:\Program Files\dLSoft\AbcITF\abcitf.ocx=
+C:\Windows\System32\ieframe.dll=
+C:\Program Files\Common Files\System\ado\msado28.tlb=
+C:\Program Files\Common Files\System\ado\msadox28.tlb=
+C:\Program Files\Common Files\DESIGNER\MSCONDES.DLL=
+C:\WINDOWS\system32\crypt32.dll=
+C:\WINDOWS\WinSxS\x86_Microsoft.Windows.GdiPlus_6595b64144ccf1df_1.0.6001.22319_x-ww_f0b4c2df\GdiPlus.dll=
+C:\WINDOWS\system32\wininet.dll=
+
+[Package|Paquete de instalación|Out-of-Date Dependency Information]
+C:\WINDOWS\system32\MSCAL.OCX=
+C:\WINDOWS\system32\msstdfmt.dll=
+C:\Windows\System32\mscomctl.ocx=
+
+[Package|Paquete de instalación|Files Added]
+
+[Package|Paquete de instalación|Files Removed]
+c:\archivos de programa\microsoft visual studio\vb98\wizards\pdwizard\redist\mdac_typ.exe=
+c:\windows\system32\msvbvm60.dll=
+c:\archivos de programa\microsoft visual studio\vb98\wizards\pdwizard\redist\oleaut32.dll=
+c:\archivos de programa\microsoft visual studio\vb98\wizards\pdwizard\redist\olepro32.dll=
+c:\archivos de programa\microsoft visual studio\vb98\wizards\pdwizard\redist\asycfilt.dll=
+c:\archivos de programa\microsoft visual studio\vb98\wizards\pdwizard\redist\stdole2.tlb=
+c:\archivos de programa\microsoft visual studio\vb98\wizards\pdwizard\redist\comcat.dll=
+
+[Package|Paquete de instalación|Files In Project]
+C:\WINDOWS\system32\msvbvm60.dll=No
+C:\WINDOWS\system32\vb6es.dll=Yes
+C:\WINDOWS\system32\odbccp32.dll=Yes
+C:\WINDOWS\system32\msjet40.dll=Yes
+C:\WINDOWS\system32\msjter40.dll=Yes
+C:\WINDOWS\system32\msjint40.dll=Yes
+C:\WINDOWS\system32\vbajet32.dll=Yes
+C:\WINDOWS\system32\expsrv.dll=Yes
+C:\WINDOWS\system32\mswstr10.dll=Yes
+C:\WINDOWS\system32\mswdat10.dll=Yes
+C:\WINDOWS\system32\msrd2x40.dll=Yes
+C:\WINDOWS\system32\msrd3x40.dll=Yes
+C:\WINDOWS\system32\msrepl40.dll=Yes
+C:\WINDOWS\system32\msjtes40.dll=Yes
+C:\WINDOWS\system32\VB5DB.DLL=Yes
+C:\WINDOWS\system32\vsflex8.ocx=Yes
+C:\WINDOWS\system32\MSRDO20.DLL=Yes
+C:\WINDOWS\system32\RDOCURS.DLL=Yes
+C:\WINDOWS\system32\RDO20ES.DLL=Yes
+C:\WINDOWS\system32\MSADODC.OCX=Yes
+C:\WINDOWS\system32\ADODCES.DLL=Yes
+C:\WINDOWS\system32\MSCOMCT2.OCX=Yes
+C:\WINDOWS\system32\MSCC2ES.DLL=Yes
+C:\WINDOWS\system32\vsprint8.ocx=Yes
+C:\WINDOWS\system32\vsrpt8.ocx=Yes
+C:\WINDOWS\system32\vsvport8.ocx=Yes
+C:\Archivos de programa\Microsoft Visual Studio\VB98\Wizards\PDWizard\SETUP.EXE=Yes
+C:\Archivos de programa\Microsoft Visual Studio\VB98\Wizards\PDWizard\SETUP1.EXE=Yes
+C:\WINDOWS\system32\VB6STKIT.DLL=Yes
+C:\Archivos de programa\Microsoft Visual Studio\VB98\Wizards\PDWizard\ST6UNST.EXE=Yes
+C:\WINDOWS\system32\vspdf8.ocx=Yes
+C:\WINDOWS\system32\ChilkatMail2.dll=Yes
+C:\WINDOWS\SQLite2009Pro\msbind.dll=Yes
+C:\WINDOWS\SQLite2009Pro\msstdfmt.dll=Yes
+\\VBOXSVR\a_windows\Sistema\Alestel\FCMENU.exe=Yes
+C:\Windows\System32\mscomctl.ocx=Yes
+C:\Windows\System32\MSCMCES.DLL=Yes
+C:\Archivos de programa\Microsoft Visual Studio\VB98\Wizards\PDWizard\Redist\OLEAUT32.DLL=No
+C:\Archivos de programa\Microsoft Visual Studio\VB98\Wizards\PDWizard\Redist\OLEPRO32.DLL=No
+C:\Archivos de programa\Microsoft Visual Studio\VB98\Wizards\PDWizard\Redist\ASYCFILT.DLL=No
+C:\Archivos de programa\Microsoft Visual Studio\VB98\Wizards\PDWizard\Redist\STDOLE2.TLB=No
+C:\Archivos de programa\Microsoft Visual Studio\VB98\Wizards\PDWizard\Redist\COMCAT.DLL=No
+C:\WINDOWS\system32\wininet.dll=Yes
+C:\WINDOWS\WinSxS\x86_Microsoft.Windows.GdiPlus_6595b64144ccf1df_1.0.6001.22319_x-ww_f0b4c2df\GdiPlus.dll=Yes
+C:\WINDOWS\system32\crypt32.dll=Yes
+C:\Archivos de programa\Archivos comunes\Microsoft Shared\DAO\dao360.dll=Yes
+C:\Archivos de programa\Archivos comunes\designer\MSCDRUN.DLL=Yes
+C:\Archivos de programa\Archivos comunes\designer\CONNDES.DLL=Yes
+C:\Archivos de programa\Archivos comunes\designer\MSCONDES.DLL=Yes
+C:\WINDOWS\system32\msadox.dll=Yes
+C:\Archivos de programa\Archivos comunes\designer\MSHTMPGR.DLL=Yes
+C:\Archivos de programa\Archivos comunes\designer\HTMPRES.DLL=Yes
+C:\Archivos de programa\Microsoft Office\Office12\MSCAL.OCX=Yes
+C:\Archivos de programa\dLSoft\AbcITF\abcitf.ocx=Yes
+C:\Archivos de programa\Microsoft Visual Studio\VB98\Wizards\PDWizard\Redist\MDAC_TYP.EXE=No
+
+[Package|Paquete de instalación|Configure Registry Files]
+Applicable=No
+
+[Package|Paquete de instalación|Configure Remote Servers]
+Applicable=No
+
+[Package|Paquete de instalación|Install Locations]
+C:\Sistema\Alestel\FCMENU.exe=$(AppPath)
+C:\WINDOWS\system32\msvbvm60.dll=$(WinSysPathSysFile)
+C:\Archivos de programa\Microsoft Visual Studio\VB98\Wizards\PDWizard\Redist\OLEAUT32.DLL=$(WinSysPathSysFile)
+C:\Archivos de programa\Microsoft Visual Studio\VB98\Wizards\PDWizard\Redist\OLEPRO32.DLL=$(WinSysPathSysFile)
+C:\Archivos de programa\Microsoft Visual Studio\VB98\Wizards\PDWizard\Redist\ASYCFILT.DLL=$(WinSysPathSysFile)
+C:\Archivos de programa\Microsoft Visual Studio\VB98\Wizards\PDWizard\Redist\STDOLE2.TLB=$(WinSysPathSysFile)
+C:\Archivos de programa\Microsoft Visual Studio\VB98\Wizards\PDWizard\Redist\COMCAT.DLL=$(WinSysPathSysFile)
+C:\WINDOWS\system32\vb6es.dll=$(WinSysPath)
+C:\WINDOWS\system32\odbccp32.dll=$(WinSysPath)
+C:\Archivos de programa\Archivos comunes\Microsoft Shared\DAO\dao360.dll=$(MSDAOPath)
+C:\WINDOWS\system32\msjet40.dll=$(WinSysPathSysFile)
+C:\WINDOWS\system32\msjter40.dll=$(WinSysPathSysFile)
+C:\WINDOWS\system32\msjint40.dll=$(WinSysPathSysFile)
+C:\WINDOWS\system32\vbajet32.dll=$(WinSysPathSysFile)
+C:\WINDOWS\system32\expsrv.dll=$(WinSysPathSysFile)
+C:\WINDOWS\system32\mswstr10.dll=$(WinSysPathSysFile)
+C:\WINDOWS\system32\mswdat10.dll=$(WinSysPathSysFile)
+C:\WINDOWS\system32\msrd2x40.dll=$(WinSysPathSysFile)
+C:\WINDOWS\system32\msrd3x40.dll=$(WinSysPathSysFile)
+C:\WINDOWS\system32\msrepl40.dll=$(WinSysPathSysFile)
+C:\WINDOWS\system32\msjtes40.dll=$(WinSysPathSysFile)
+C:\WINDOWS\system32\VB5DB.DLL=$(WinSysPath)
+C:\WINDOWS\system32\MSBIND.DLL=$(WinSysPath)
+C:\WINDOWS\system32\msstdfmt.dll=$(WinSysPath)
+C:\WINDOWS\system32\stdftes.dll=$(WinSysPath)
+C:\WINDOWS\system32\vsflex8.ocx=$(WinSysPath)
+C:\Archivos de programa\Archivos comunes\Designer\MSCDRUN.DLL=$(CommonFiles)\Designer
+C:\WINDOWS\system32\MSRDO20.DLL=$(WinSysPath)
+C:\WINDOWS\system32\RDOCURS.DLL=$(WinSysPath)
+C:\WINDOWS\system32\RDO20ES.DLL=$(WinSysPath)
+C:\Archivos de programa\Archivos comunes\Designer\CONNDES.DLL=$(WinSysPath)
+C:\Archivos de programa\Archivos comunes\Designer\MSCONDES.DLL=$(WinSysPath)
+C:\WINDOWS\system32\MSCOMCTL.OCX=$(WinSysPath)
+C:\WINDOWS\system32\MSCMCES.DLL=$(WinSysPath)
+C:\WINDOWS\system32\MSCAL.OCX=$(WinSysPath)
+C:\WINDOWS\system32\MSADODC.OCX=$(WinSysPath)
+C:\WINDOWS\system32\ADODCES.DLL=$(WinSysPath)
+C:\WINDOWS\system32\MSDATGRD.OCX=$(WinSysPath)
+C:\WINDOWS\system32\DATGDES.DLL=$(WinSysPath)
+C:\WINDOWS\system32\MSCOMCT2.OCX=$(WinSysPath)
+C:\WINDOWS\system32\MSCC2ES.DLL=$(WinSysPath)
+C:\WINDOWS\system32\MSDATLST.OCX=$(WinSysPath)
+C:\WINDOWS\system32\DATLSES.DLL=$(WinSysPath)
+C:\WINDOWS\system32\vsprint8.ocx=$(WinSysPath)
+C:\WINDOWS\system32\vsrpt8.ocx=$(WinSysPath)
+C:\WINDOWS\system32\vsvport8.ocx=$(WinSysPath)
+C:\Archivos de programa\Microsoft Visual Studio\VB98\Wizards\PDWizard\Redist\MDAC_TYP.EXE=$(AppPath)
+C:\Archivos de programa\Microsoft Visual Studio\VB98\Wizards\PDWizard\SETUP.EXE=$(AppPath)
+C:\Archivos de programa\Microsoft Visual Studio\VB98\Wizards\PDWizard\SETUP1.EXE=$(WinPath)
+C:\WINDOWS\system32\VB6STKIT.DLL=$(WinSysPathSysFile)
+C:\Archivos de programa\Microsoft Visual Studio\VB98\Wizards\PDWizard\ST6UNST.EXE=$(WinPath)
+C:\Sistema\Alestel\RADMIN32.DLL=$(WinSysPath)
+C:\Archivos de programa\Archivos comunes\System\ado\msadox.dll=$(WinSysPath)
+C:\WINDOWS\system32\ARPopUpMenu.ocx=$(WinSysPath)
+C:\WINDOWS\system32\msadox.dll=$(WinSysPath)
+C:\Archivos de programa\Chilkat Software Inc\Chilkat Mail ActiveX\ChilkatMail2.dll=$(WinSysPath)
+C:\Sistema\Alestel\MSCAL.OCX=$(WinSysPath)
+G:\Sistema\Alestel\fcmenu.EXE=$(AppPath)
+C:\WINDOWS\system32\hpm_System32\MSBIND.DLL=$(WinSysPath)
+C:\WINDOWS\system32\hpm_System32\MSSTDFMT.DLL=$(WinSysPath)
+C:\WINDOWS\system32\vspdf8.ocx=$(WinSysPath)
+C:\Archivos de programa\Archivos comunes\DESIGNER\MSHTMPGR.DLL=$(CommonFiles)\Designer
+C:\Archivos de programa\Archivos comunes\DESIGNER\HTMPRES.DLL=$(WinSysPath)
+C:\Archivos de programa\Foxit Software\Foxit Reader\Foxit Reader.exe=$(AppPath)
+C:\Archivos de programa\dLSoft\AbcITF\abcitf.ocx=$(WinSysPath)
+D:\Sistema\Alestel\fcmenu.EXE=$(AppPath)
+C:\WINDOWS\system32\ChilkatMail2.dll=$(WinSysPath)
+C:\Archivos de programa\aTube Catcher\mscomctl.OCX=$(WinSysPath)
+C:\Archivos de programa\Microsoft Office\Office12\MSCAL.OCX=$(AppPath)
+C:\WINDOWS\SQLite2009Pro\msbind.dll=$(WinSysPath)
+C:\WINDOWS\SQLite2009Pro\msstdfmt.dll=$(WinSysPath)
+C:\Archivos de programa\DsNET Corp\aTube Catcher 2.0\mscomctl.OCX=$(WinSysPath)
+\\VBOXSVR\a_windows\Sistema\Alestel\FCMENU.exe=$(AppPath)
+C:\Program Files\Microsoft Visual Studio\VB98\Wizards\PDWizard\Redist\OLEAUT32.DLL=$(WinSysPathSysFile)
+C:\Program Files\Microsoft Visual Studio\VB98\Wizards\PDWizard\Redist\OLEPRO32.DLL=$(WinSysPathSysFile)
+C:\Program Files\Microsoft Visual Studio\VB98\Wizards\PDWizard\Redist\ASYCFILT.DLL=$(WinSysPathSysFile)
+C:\Program Files\Microsoft Visual Studio\VB98\Wizards\PDWizard\Redist\STDOLE2.TLB=$(WinSysPathSysFile)
+C:\Program Files\Microsoft Visual Studio\VB98\Wizards\PDWizard\Redist\COMCAT.DLL=$(WinSysPathSysFile)
+C:\Program Files\Common Files\microsoft shared\DAO\dao360.dll=$(MSDAOPath)
+C:\Program Files\Common Files\DESIGNER\MSCDRUN.DLL=$(CommonFiles)\Designer
+C:\Program Files\Common Files\DESIGNER\CONNDES.DLL=$(WinSysPath)
+C:\Program Files\Common Files\DESIGNER\MSCONDES.DLL=$(WinSysPath)
+C:\Program Files\Common Files\System\ado\msadox28.tlb=$(WinSysPath)
+C:\Program Files\Common Files\System\ado\msado28.tlb=$(WinSysPath)
+C:\Windows\System32\ieframe.dll=$(WinSysPath)
+C:\Program Files\Common Files\DESIGNER\MSHTMPGR.DLL=$(CommonFiles)\Designer
+C:\Program Files\Common Files\DESIGNER\HTMPRES.DLL=$(WinSysPath)
+C:\Program Files\Microsoft Office\Office12\MSCAL.OCX=$(AppPath)
+C:\Windows\System32\AcroPDF.dll=$(WinSysPath)
+C:\Program Files\dLSoft\AbcITF\abcitf.ocx=$(WinSysPath)
+C:\Program Files\Microsoft Visual Studio\VB98\Wizards\PDWizard\Redist\MDAC_TYP.EXE=$(AppPath)
+C:\WINDOWS\system32\wininet.dll=$(WinSysPath)
+C:\WINDOWS\WinSxS\x86_Microsoft.Windows.GdiPlus_6595b64144ccf1df_1.0.6001.22319_x-ww_f0b4c2df\GdiPlus.dll=$(WinSysPath)
+C:\WINDOWS\system32\crypt32.dll=$(WinSysPath)
+
+[Package|Paquete de instalación|Configure Shared Files]
+Applicable=Yes
+C:\Sistema\Alestel\FCMENU.exe=Yes
+C:\Archivos de programa\Microsoft Visual Studio\VB98\Wizards\PDWizard\Redist\MDAC_TYP.EXE=Yes
+G:\Sistema\Alestel\fcmenu.EXE=No
+C:\Archivos de programa\Foxit Software\Foxit Reader\Foxit Reader.exe=No
+D:\Sistema\Alestel\fcmenu.EXE=No
+C:\Archivos de programa\Microsoft Office\Office12\MSCAL.OCX=No
+\\VBOXSVR\a_windows\Sistema\Alestel\FCMENU.exe=No
+C:\Program Files\Microsoft Office\Office12\MSCAL.OCX=No
+C:\Program Files\Microsoft Visual Studio\VB98\Wizards\PDWizard\Redist\MDAC_TYP.EXE=No
+
+[Package|Paquete de instalación|Distribution]
+Type=single
+Size=1.44 MB
+Title=FCMENU
+
+[Package|Paquete de instalación|Package]
+PackageFolder=c:\Temp\Alestel
+ProjectFolder=\\VBOXSVR\a_windows\Sistema\Alestel
+ServerSideCab=
+File1=c:\Temp\Alestel\setup.exe
+File2=c:\Temp\Alestel\Setup.Lst
+File3=c:\Temp\Alestel\FCMENU.CAB
+Handler1=PDWizard.FolderDplySubWiz
+Handler2=PDWizard.WebPostDplySubWiz
+
+[Package|Paquete de instalación|IconGroups]
+Group0=FCMENU
+PrivateGroup0=-1
+Parent0=$(Programs)
+
+[Package|Paquete de instalación|FCMENU]
+Icon1=FCMENU.exe /PV:0001
+Title1=FCMENU
+StartIn1=$(AppPath)
+Key1=Icon1

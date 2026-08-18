@@ -1,0 +1,22 @@
+.venv/
+__pycache__/
+*.pyc
+.pytest_cache/
+.env
+fcmenu.sqlite3
+*.mdb
+*.ldb
+migration/pdf_output/
+
+# Certificados/claves reales de AFIP (ALESTEL.crt/.key, Homo.key,
+# empresa.crt/.csr) — NUNCA al repo, son credenciales reales de la
+# empresa, no artefactos de migración.
+*.key
+*.crt
+*.csr
+*.pfx
+*.p12
+
+# Config local de Claude Code (modo de permisos, etc.) — preferencia
+# personal de esta máquina, no algo para compartir en el repo.
+.claude/

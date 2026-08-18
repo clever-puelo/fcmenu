@@ -1,0 +1,14 @@
+SQLAlchemy>=2.0
+psycopg2-binary>=2.9
+PyQt6>=6.7
+# AFIP (WSAA/WSFEv1) — cliente SOAP nativo, ver migration/afip.py.
+# pyafipws NO se usa: su paquete de PyPI falla al instalar en este
+# entorno (pip rechaza el .tar.gz por un symlink que escapa del
+# directorio de extracción) y no hace falta — WSAA/WSFEv1 son sólo dos
+# servicios SOAP estándar. cryptography firma el TRA en CMS/PKCS7, zeep
+# es el cliente SOAP.
+cryptography>=42.0
+zeep>=4.2
+# PDF de Factura Electrónica (migration/pdf.py) — el QR se dibuja nativo
+# con reportlab.graphics.barcode.qr, no hace falta una librería de QR aparte.
+reportlab>=4.0

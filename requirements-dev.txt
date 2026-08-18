@@ -1,0 +1,4 @@
+-r requirements.txt
+pytest>=8.0
+alembic>=1.13
+pypdf>=5.0  # sólo para tests/test_pdf.py (leer el PDF generado y verificar contenido)

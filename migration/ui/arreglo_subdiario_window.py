@@ -1,0 +1,372 @@
+"""`ArregloSubdiarioWindow` — migración de `CargaFC.frm` ("Arreglos >
+Subdiario Ventas", menú oculto `Complementos`/`RECICLA1`/`ARRESUBDV1`
+de `FCMENU.frm`).
+
+Editor directo de la CABECERA de un comprobante en `FcivaVta` — ver
+`ArregloSubdiarioService` para el alcance ("romper vidrio", sin las
+validaciones del Facturador) y el bug real corregido (Cod.IVA con el
+código real 1-5, no el `ListIndex` 0-4 del legacy).
+"""
+
+from __future__ import annotations
+
+from decimal import Decimal
+
+from PyQt6.QtCore import QDate
+from PyQt6.QtWidgets import (
+    QComboBox,
+    QDateEdit,
+    QFormLayout,
+    QGroupBox,
+    QHBoxLayout,
+    QLabel,
+    QMainWindow,
+    QMessageBox,
+    QPushButton,
+    QSpinBox,
+    QVBoxLayout,
+    QWidget,
+)
+
+from migration.db import get_session
+from migration.repository import RepositoryFactory
+from migration.services import ArregloSubdiarioService
+
+from .cliente_detalle_dialog import CIVA_OPCIONES
+from .facturador_window import FORMAS_PEDIDO
+from .widgets import EnterAsTabFilter, EnteroLineEdit, MontoLineEdit, UpperCaseLineEdit, crear_boton_hoy
+
+# Tipo Cpbte — réplica de CargaFC.frx (Combo1): a diferencia de
+# CargaCC.frm no hay "0-Saldo Anterior" (concepto exclusivo de
+# CtasCtes) y sí hay "9-Anulada".
+TIPOS_CPBTE = [
+    (1, "Factura"), (2, "Nota Crédito"), (3, "Nota Débito"),
+    (4, "Recibo"), (5, "Pago a Cta."), (6, "Descuento"), (9, "Anulada"),
+]
+TIPOS_CON_FORMA_PEDIDO = {1, 4}  # Factura/Recibo -> Combo8; el resto -> Motivo (Combo7)
+
+# Letra — réplica de CargaFC.frx (Combo2): a diferencia de CargaCC.frm
+# incluye "E" (Exportación).
+LETRAS = ["A", "B", "E", "X"]
+
+
+class ArregloSubdiarioWindow(QMainWindow):
+    def __init__(self, parent: QWidget | None = None):
+        super().__init__(parent)
+        self.setWindowTitle("Arreglos — Subdiario Ventas")
+        self.resize(680, 640)
+
+        self.db = get_session()
+        self.repos = RepositoryFactory(self.db)
+        self.service = ArregloSubdiarioService(self.db)
+
+        self._construir_ui()
+        self._poblar_combos_tablas()
+
+    # ------------------------------------------------------------------
+    def _construir_ui(self) -> None:
+        central = QWidget()
+        self.setCentralWidget(central)
+        layout = QVBoxLayout(central)
+
+        layout.addWidget(self._armar_cabecera())
+        layout.addWidget(self._armar_cliente())
+        layout.addWidget(self._armar_importes())
+
+        fila_botones = QHBoxLayout()
+        self.btn_borrar = QPushButton("Borrar")
+        self.btn_borrar.setVisible(False)
+        self.btn_borrar.clicked.connect(self._on_borrar)
+        fila_botones.addWidget(self.btn_borrar)
+        fila_botones.addStretch()
+        self.btn_grabar = QPushButton("Grabar")
+        self.btn_grabar.setEnabled(False)
+        self.btn_grabar.clicked.connect(self._on_grabar)
+        fila_botones.addWidget(self.btn_grabar)
+        btn_cerrar = QPushButton("Cerrar")
+        btn_cerrar.clicked.connect(self.close)
+        fila_botones.addWidget(btn_cerrar)
+        layout.addLayout(fila_botones)
+
+        self.combo_tipo.currentIndexChanged.connect(self._on_tipo_cambiado)
+        self.combo_tipo.currentIndexChanged.connect(self._buscar_fila)
+        self.combo_letra.currentIndexChanged.connect(self._buscar_fila)
+        self.txt_prefijo.editingFinished.connect(self._buscar_fila)
+        self.txt_cpbte.editingFinished.connect(self._buscar_fila)
+        self.spin_clte.editingFinished.connect(self._on_cliente_confirmado)
+
+        self._on_tipo_cambiado()
+        self._enter_as_tab = EnterAsTabFilter(self, boton_final=self.btn_grabar)
+
+    def _armar_cabecera(self) -> QGroupBox:
+        grupo = QGroupBox("Comprobante")
+        form = QFormLayout(grupo)
+
+        self.fecha = QDateEdit()
+        self.fecha.setCalendarPopup(True)
+        self.fecha.setDate(QDate.currentDate())
+        fila_fecha = QHBoxLayout()
+        fila_fecha.addWidget(self.fecha)
+        fila_fecha.addWidget(crear_boton_hoy(self.fecha))
+        form.addRow("Fecha :", fila_fecha)
+
+        self.combo_tipo = QComboBox()
+        for codigo, etiqueta in TIPOS_CPBTE:
+            self.combo_tipo.addItem(f"{codigo}-{etiqueta}", codigo)
+        form.addRow("Tipo Cpbte. :", self.combo_tipo)
+
+        self.combo_letra = QComboBox()
+        self.combo_letra.addItems(LETRAS)
+        form.addRow("Letra :", self.combo_letra)
+
+        self.txt_prefijo = EnteroLineEdit("0001")
+        form.addRow("Prefijo (Pto.Vta.) :", self.txt_prefijo)
+
+        self.txt_cpbte = EnteroLineEdit()
+        form.addRow("Nro. Cpbte. :", self.txt_cpbte)
+
+        self.lbl_estado = QLabel()
+        self.lbl_estado.setStyleSheet("color: #b00020; font-weight: bold;")
+        form.addRow("", self.lbl_estado)
+
+        return grupo
+
+    def _armar_cliente(self) -> QGroupBox:
+        grupo = QGroupBox("Cliente")
+        form = QFormLayout(grupo)
+
+        self.spin_clte = QSpinBox()
+        self.spin_clte.setRange(0, 999999)
+        self.spin_clte.setButtonSymbols(QSpinBox.ButtonSymbols.NoButtons)
+        form.addRow("Cliente :", self.spin_clte)
+
+        self.txt_nombre = UpperCaseLineEdit()
+        self.txt_nombre.setMaxLength(100)
+        form.addRow("Razón Social :", self.txt_nombre)
+
+        self.txt_pcia = UpperCaseLineEdit()
+        self.txt_pcia.setMaxLength(1)
+        form.addRow("Pcia. (letra) :", self.txt_pcia)
+
+        self.txt_cuit = EnteroLineEdit()
+        form.addRow("CUIT :", self.txt_cuit)
+
+        self.combo_civa = QComboBox()
+        for codigo, etiqueta in CIVA_OPCIONES:
+            self.combo_civa.addItem(etiqueta, codigo)
+        form.addRow("Cod. IVA :", self.combo_civa)
+
+        self.combo_vend = QComboBox()
+        form.addRow("Vendedor :", self.combo_vend)
+
+        self.combo_zona = QComboBox()
+        form.addRow("Zona :", self.combo_zona)
+
+        self.combo_cvta = QComboBox()
+        form.addRow("Cond. Vta. :", self.combo_cvta)
+
+        self.lbl_motivo = QLabel("Forma Ped. :")
+        self.combo_forma_ped = QComboBox()
+        self.combo_forma_ped.addItems(FORMAS_PEDIDO)
+        self.combo_motivo = QComboBox()
+        form.addRow(self.lbl_motivo, self.combo_forma_ped)
+        form.addRow("", self.combo_motivo)
+
+        return grupo
+
+    def _armar_importes(self) -> QGroupBox:
+        grupo = QGroupBox("Importes")
+        form = QFormLayout(grupo)
+
+        self.txt_grins = MontoLineEdit()
+        form.addRow("Gravado :", self.txt_grins)
+        self.txt_ivains = MontoLineEdit()
+        form.addRow("IVA Inscr. :", self.txt_ivains)
+        self.txt_ivanoins = MontoLineEdit()
+        form.addRow("IVA No Insc. :", self.txt_ivanoins)
+        self.txt_exento = MontoLineEdit()
+        form.addRow("Exento :", self.txt_exento)
+        self.txt_bon = MontoLineEdit()
+        form.addRow("Descuentos :", self.txt_bon)
+        self.txt_porcib = MontoLineEdit()
+        form.addRow("% I.B. :", self.txt_porcib)
+        self.txt_totib = MontoLineEdit()
+        form.addRow("Impte. I.B. :", self.txt_totib)
+        self.txt_items = EnteroLineEdit("0")
+        form.addRow("Items :", self.txt_items)
+        self.txt_totcan = EnteroLineEdit("0")
+        form.addRow("Tot.Unid. :", self.txt_totcan)
+
+        return grupo
+
+    # ------------------------------------------------------------------
+    def _poblar_combos_tablas(self) -> None:
+        for cod, descri in self._opciones_tabla("VD"):
+            self.combo_vend.addItem(f"{cod}-{descri}", cod)
+        for cod, descri in self._opciones_tabla("ZN"):
+            self.combo_zona.addItem(f"{cod}-{descri}", cod)
+        for cod, descri in self._opciones_tabla("CV"):
+            self.combo_cvta.addItem(f"{cod}-{descri}", cod)
+        for cod, descri in self._opciones_tabla("MT"):
+            self.combo_motivo.addItem(f"{cod}-{descri}", cod)
+
+    def _opciones_tabla(self, ctab: str) -> list[tuple[int, str]]:
+        filas = self.repos.fctablas().by_ctab(ctab)
+        opciones = []
+        for f in filas:
+            cod_texto = (f.COD or "").strip()
+            if cod_texto.isdigit():
+                opciones.append((int(cod_texto), (f.DESCRI or "").strip()))
+        return opciones
+
+    def _on_tipo_cambiado(self) -> None:
+        tipo = self.combo_tipo.currentData()
+        es_forma_pedido = tipo in TIPOS_CON_FORMA_PEDIDO
+        self.lbl_motivo.setText("Forma Ped. :" if es_forma_pedido else "Motivo :")
+        self.combo_forma_ped.setVisible(es_forma_pedido)
+        self.combo_motivo.setVisible(not es_forma_pedido)
+
+    def _on_cliente_confirmado(self) -> None:
+        clte = self.spin_clte.value()
+        cliente = self.repos.cliente().by_codigo(clte) if clte else None
+        if cliente is None:
+            self.txt_nombre.setText("*** Cliente NO Existe ***")
+            return
+        self.txt_nombre.setText((cliente.NOMB or "").strip())
+        self.txt_pcia.setText((cliente.PCIA or "").strip()[:1])
+        self.txt_cuit.setText((cliente.CUIT or "").strip())
+        idx_civa = self.combo_civa.findData(cliente.CIVA or 1)
+        if idx_civa >= 0:
+            self.combo_civa.setCurrentIndex(idx_civa)
+        self._seleccionar_por_data(self.combo_vend, cliente.VEND)
+        self._seleccionar_por_data(self.combo_zona, cliente.ZONA)
+        self._seleccionar_por_data(self.combo_cvta, cliente.CVTA)
+
+    @staticmethod
+    def _seleccionar_por_data(combo: QComboBox, valor: int | None) -> None:
+        if valor is None:
+            return
+        idx = combo.findData(valor)
+        if idx >= 0:
+            combo.setCurrentIndex(idx)
+
+    # ------------------------------------------------------------------
+    def _buscar_fila(self) -> None:
+        letra = self.combo_letra.currentText()
+        tipo = self.combo_tipo.currentData()
+        prefijo = self.txt_prefijo.entero()
+        cpbte = self.txt_cpbte.entero()
+        if prefijo is None or cpbte is None:
+            return
+
+        fila = self.service.buscar(letra, tipo, prefijo, cpbte)
+
+        if fila is not None:
+            self.lbl_estado.setText("")
+            self.spin_clte.setValue(fila.CLTE or 0)
+            self.txt_nombre.setText((fila.NOMB or "").strip())
+            self.txt_pcia.setText((fila.PCIA or "").strip()[:1])
+            self.txt_cuit.setText((fila.CUIT or "").strip())
+            idx_civa = self.combo_civa.findData(int(fila.CIVA) if (fila.CIVA or "").strip().isdigit() else 1)
+            self.combo_civa.setCurrentIndex(idx_civa if idx_civa >= 0 else 0)
+            self._seleccionar_por_data(self.combo_vend, fila.VEND)
+            self._seleccionar_por_data(self.combo_zona, fila.ZONA)
+            self._seleccionar_por_data(self.combo_cvta, fila.CVTA)
+            moti_texto = (fila.MOTI or "").strip()
+            if moti_texto.isdigit():
+                if tipo in TIPOS_CON_FORMA_PEDIDO:
+                    idx = int(moti_texto) - 1
+                    if 0 <= idx < self.combo_forma_ped.count():
+                        self.combo_forma_ped.setCurrentIndex(idx)
+                else:
+                    self._seleccionar_por_data(self.combo_motivo, int(moti_texto))
+
+            self.txt_grins.set_decimal(fila.GRINS or Decimal("0"))
+            self.txt_ivains.set_decimal(fila.IVAINS or Decimal("0"))
+            self.txt_ivanoins.set_decimal(fila.IVANOINS or Decimal("0"))
+            self.txt_exento.set_decimal(fila.EXENTO or Decimal("0"))
+            self.txt_bon.set_decimal(fila.BON or Decimal("0"))
+            self.txt_porcib.set_decimal(fila.PORCIB or Decimal("0"))
+            self.txt_totib.set_decimal(fila.TOTIB or Decimal("0"))
+            self.txt_items.setText(str(fila.ITEMS or 0))
+            self.txt_totcan.setText(str(fila.TOTCAN or 0))
+            self.btn_borrar.setVisible(True)
+        else:
+            self.lbl_estado.setText("N U E V O")
+            self.spin_clte.setValue(0)
+            self.txt_nombre.setText("")
+            self.txt_pcia.setText("")
+            self.txt_cuit.setText("")
+            for campo in (
+                self.txt_grins, self.txt_ivains, self.txt_ivanoins, self.txt_exento,
+                self.txt_bon, self.txt_porcib, self.txt_totib,
+            ):
+                campo.set_decimal(Decimal("0"))
+            self.txt_items.setText("0")
+            self.txt_totcan.setText("0")
+            self.btn_borrar.setVisible(False)
+
+        self.btn_grabar.setEnabled(True)
+
+    # ------------------------------------------------------------------
+    def _moti_a_grabar(self) -> str:
+        tipo = self.combo_tipo.currentData()
+        if tipo in TIPOS_CON_FORMA_PEDIDO:
+            return str(self.combo_forma_ped.currentIndex() + 1)
+        return str(self.combo_motivo.currentData() or 0)
+
+    def _on_grabar(self) -> None:
+        respuesta = QMessageBox.question(
+            self, "Carga de Datos a la Tabla", "¿Desea continuar?",
+            QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
+        )
+        if respuesta != QMessageBox.StandardButton.Yes:
+            return
+
+        self.service.grabar(
+            tipo=self.combo_tipo.currentData(),
+            letra=self.combo_letra.currentText(),
+            ptovta=self.txt_prefijo.entero() or 0,
+            cpbte=self.txt_cpbte.entero() or 0,
+            fecha=self.fecha.date().toPyDate(),
+            clte=self.spin_clte.value(),
+            nomb=self.txt_nombre.text().strip(),
+            pcia=self.txt_pcia.text().strip(),
+            cuit=self.txt_cuit.text().strip(),
+            grins=self.txt_grins.decimal(),
+            ivains=self.txt_ivains.decimal(),
+            ivanoins=self.txt_ivanoins.decimal(),
+            exento=self.txt_exento.decimal(),
+            bon=self.txt_bon.decimal(),
+            porcib=self.txt_porcib.decimal(),
+            totib=self.txt_totib.decimal(),
+            items=self.txt_items.entero() or 0,
+            totcan=self.txt_totcan.entero() or 0,
+            civa=self.combo_civa.currentData(),
+            vend=self.combo_vend.currentData(),
+            zona=self.combo_zona.currentData(),
+            cvta=self.combo_cvta.currentData(),
+            moti=self._moti_a_grabar(),
+        )
+        QMessageBox.information(self, "Arreglos", "Registro grabado.")
+        self._buscar_fila()
+
+    def _on_borrar(self) -> None:
+        respuesta = QMessageBox.question(
+            self, "Eliminar Datos de la Tabla", "¿Desea continuar?",
+            QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
+        )
+        if respuesta != QMessageBox.StandardButton.Yes:
+            return
+
+        self.service.borrar(
+            self.combo_letra.currentText(), self.combo_tipo.currentData(),
+            self.txt_prefijo.entero() or 0, self.txt_cpbte.entero() or 0,
+        )
+        QMessageBox.information(self, "Arreglos", "Registro eliminado.")
+        self._buscar_fila()
+
+    # ------------------------------------------------------------------
+    def closeEvent(self, event) -> None:  # noqa: N802 (Qt override)
+        self.db.close()
+        super().closeEvent(event)
