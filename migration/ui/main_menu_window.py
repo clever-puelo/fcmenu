@@ -703,7 +703,24 @@ class MainMenuWindow(QMainWindow):
         # (`get_session()`) y no tiene sentido dejarla viva-pero-oculta
         # después de que el usuario la cerró.
         ventana.setAttribute(Qt.WidgetAttribute.WA_DeleteOnClose)
+
+        # **Bug real encontrado con capturas de pantalla reales**
+        # (2026-08-19: "sigue mal" — las ventanas quedaban chicas pese a
+        # `redimensionar_pct_pantalla()` ya aplicado en el `__init__` de
+        # cada pantalla): `QMdiArea.addSubWindow()` NO hereda el tamaño
+        # que ya tenía el widget envuelto — el `QMdiSubWindow` que lo
+        # envuelve arranca con su propio tamaño "natural" (bastante más
+        # chico, confirmado con un script aislado: un widget de
+        # 1500×900 quedaba envuelto en un `QMdiSubWindow` de apenas
+        # 120×40 antes de mostrarlo). Por eso NINGÚN tamaño que se le
+        # haya dado a `ventana` — ni los px fijos de rondas anteriores
+        # ni el % de pantalla actual — se veía reflejado nunca: el
+        # tamaño se perdía en el momento de envolverla. Se guarda ANTES
+        # de envolver y se reaplica a mano sobre el WRAPPER, no sólo
+        # sobre `ventana`.
+        tamano_pedido = ventana.size()
         subventana = self.mdi.addSubWindow(ventana)
+        subventana.resize(tamano_pedido)
 
         # Bug real de Qt (confirmado con un script de prueba aislado,
         # `QMdiArea.addSubWindow` + cerrar el widget interno): cerrar el
