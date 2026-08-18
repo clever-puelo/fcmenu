@@ -32,6 +32,7 @@ from migration.db import get_session
 from migration.repository import ETIQUETAS_TIPO_CTASCTE, RepositoryFactory
 from migration.services import ArregloCtaCteService
 
+from .cliente_busqueda_window import ClienteBusquedaWindow
 from .widgets import EnterAsTabFilter, EnteroLineEdit, MontoLineEdit, UpperCaseLineEdit, crear_boton_hoy
 
 # Tipo Cpbte 0-6, réplica de CargaCC.frx (Combo1) — mismas etiquetas ya
@@ -47,7 +48,8 @@ class ArregloCtaCteWindow(QMainWindow):
     def __init__(self, parent: QWidget | None = None):
         super().__init__(parent)
         self.setWindowTitle("Arreglos — Cuenta Corriente")
-        self.resize(520, 480)
+        # +50% ancho (feedback del usuario, 2026-08-18, segunda ronda).
+        self.resize(780, 480)
 
         self.db = get_session()
         self.repos = RepositoryFactory(self.db)
@@ -67,9 +69,16 @@ class ArregloCtaCteWindow(QMainWindow):
         self.spin_clte = QSpinBox()
         self.spin_clte.setRange(0, 999999)
         self.spin_clte.setButtonSymbols(QSpinBox.ButtonSymbols.NoButtons)
+        # Botón de búsqueda de Cliente (feedback del usuario, 2026-08-18,
+        # segunda ronda) — hasta ahora había que saber el código de
+        # memoria y tipearlo a mano; mismo buscador modal ya usado en
+        # Facturador/Recibo/Cta.Cte.
+        self.btn_buscar_cliente = QPushButton("Buscar...")
+        self.btn_buscar_cliente.clicked.connect(self._on_buscar_cliente)
         self.lbl_nombre = QLabel()
         fila_clte = QHBoxLayout()
         fila_clte.addWidget(self.spin_clte)
+        fila_clte.addWidget(self.btn_buscar_cliente)
         fila_clte.addWidget(self.lbl_nombre, stretch=1)
         form.addRow("Cliente :", fila_clte)
 
@@ -156,6 +165,15 @@ class ArregloCtaCteWindow(QMainWindow):
         clte = self.spin_clte.value()
         cliente = self.repos.cliente().by_codigo(clte) if clte else None
         self.lbl_nombre.setText((cliente.NOMB or "").strip() if cliente else "*** Cliente NO Existe ***")
+
+    def _on_buscar_cliente(self) -> None:
+        dialogo = ClienteBusquedaWindow(parent=self, modo_seleccion=True)
+        dialogo.exec()
+        if dialogo.cliente_elegido is None:
+            return
+        self.spin_clte.setValue(dialogo.cliente_elegido.CODIGO)
+        self._on_cliente_confirmado()
+        self._buscar_fila()
 
     def _buscar_fila(self) -> None:
         clte = self.spin_clte.value()

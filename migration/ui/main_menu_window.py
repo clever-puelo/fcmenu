@@ -66,6 +66,17 @@ VERSION_APP = "2.0.0"
 INTERVALO_RELOJ_MS = 1_000
 INTERVALO_CHEQUEO_INTERNET_MS = 15_000
 ALTO_BARRA_TAREAS = 64  # botones de 52px + margen — deja lugar para 2 líneas de texto
+# Alto cuando la barra necesita 2 líneas de BOTONES, no de texto (ver
+# `_reconstruir_barra_tareas`) — 2 botones de 52px apilados + el mismo
+# margen/espaciado que ya usaba la versión de 1 línea.
+ALTO_BARRA_TAREAS_2_FILAS = 2 * (ALTO_BARRA_TAREAS - 12) + 10
+# Con más de esta cantidad de botones en una sección, la barra pasa a 2
+# líneas en vez de 1 (feedback del usuario, 2026-08-18, segunda ronda:
+# "en listados, como hay muchos botones, la ventana principal se estira
+# y sale del monitor" — con 12 botones en una sola fila, el ancho
+# mínimo de cada uno no entraba en pantalla y forzaba a la ventana
+# principal a crecer más allá del monitor).
+MAX_BOTONES_UNA_FILA = 9
 
 
 def _envolver_en_dos_lineas(texto: str, fuente: QFont, ancho_disponible: int) -> str:
@@ -326,12 +337,26 @@ class MainMenuWindow(QMainWindow):
         )
         layout.addWidget(self.lbl_titulo_seccion)
 
+        # 2 líneas de botones cuando una sección tiene más de
+        # `MAX_BOTONES_UNA_FILA` (ver `_reconstruir_barra_tareas`) — las
+        # 2 filas se arman siempre acá (la segunda arranca vacía/oculta)
+        # y `_reconstruir_barra_tareas` decide cuántos botones va en cada
+        # una según la sección activa.
         self.contenedor_tareas = QWidget()
         self.contenedor_tareas.setFixedHeight(ALTO_BARRA_TAREAS)
         self.contenedor_tareas.setStyleSheet(f"background-color: {Verde.PASTEL};")
-        self.layout_barra_tareas = QHBoxLayout(self.contenedor_tareas)
-        self.layout_barra_tareas.setContentsMargins(10, 6, 10, 6)
+        layout_tareas = QVBoxLayout(self.contenedor_tareas)
+        layout_tareas.setContentsMargins(10, 6, 10, 6)
+        layout_tareas.setSpacing(2)
+
+        self.layout_barra_tareas = QHBoxLayout()
         self.layout_barra_tareas.setSpacing(6)
+        layout_tareas.addLayout(self.layout_barra_tareas)
+
+        self.layout_barra_tareas_2 = QHBoxLayout()
+        self.layout_barra_tareas_2.setSpacing(6)
+        layout_tareas.addLayout(self.layout_barra_tareas_2)
+
         layout.addWidget(self.contenedor_tareas)
 
         # Ventanas libres/cascada (probado 2026-08-16: se descartaron las
@@ -353,22 +378,42 @@ class MainMenuWindow(QMainWindow):
             boton.setChecked(True)
         self._reconstruir_barra_tareas()
 
-    def _reconstruir_barra_tareas(self) -> None:
-        if self._seccion_actual is None:
-            return
-        while self.layout_barra_tareas.count():
-            item = self.layout_barra_tareas.takeAt(0)
+    @staticmethod
+    def _limpiar_fila_tareas(fila: QHBoxLayout) -> None:
+        while fila.count():
+            item = fila.takeAt(0)
             widget = item.widget()
             if widget is not None:
                 widget.deleteLater()
 
+    def _reconstruir_barra_tareas(self) -> None:
+        if self._seccion_actual is None:
+            return
+        self._limpiar_fila_tareas(self.layout_barra_tareas)
+        self._limpiar_fila_tareas(self.layout_barra_tareas_2)
+
         items = self._secciones()[self._seccion_actual]
+        # 2 líneas de botones si hay más de `MAX_BOTONES_UNA_FILA`
+        # (feedback del usuario, 2026-08-18, segunda ronda — ver
+        # docstring de la constante): se reparten en el mismo orden de
+        # la lista, primero la fila de arriba y después la de abajo, no
+        # intercalados.
+        dos_filas = len(items) > MAX_BOTONES_UNA_FILA
+        if dos_filas:
+            mitad = -(-len(items) // 2)  # ceil(len/2)
+            items_fila1, items_fila2 = items[:mitad], items[mitad:]
+        else:
+            items_fila1, items_fila2 = items, []
+        self.contenedor_tareas.setFixedHeight(
+            ALTO_BARRA_TAREAS_2_FILAS if dos_filas else ALTO_BARRA_TAREAS
+        )
+
         # "Calcular espacio para 8 botones y que sean proporcionales para
         # que no aparezca el scroll horizontal" (feedback del usuario,
         # 2026-08-16): el ancho de referencia (para decidir tipografía y
         # si el texto necesita 2 líneas) se calcula sobre el caso más
-        # angosto REAL (8 o más si hay más botones que eso, ej. Consultas/
-        # Varios) — así el tamaño de letra queda consistente entre
+        # angosto REAL (8 o más si hay más botones que eso en la fila más
+        # larga) — así el tamaño de letra queda consistente entre
         # secciones aunque una tenga menos botones (esos quedan más
         # anchos, "proporcionales" al espacio real disponible).
         # Se calcula a partir de `self.width()`/`self.sidebar.width()` (no
@@ -377,10 +422,13 @@ class MainMenuWindow(QMainWindow):
         # esto puede correr antes de eso (primera sección seleccionada en
         # `__init__`, todavía sin mostrar la ventana).
         ancho_disponible = max(self.width() - self.sidebar.width() - 40, 200)
-        ancho_referencia = ancho_disponible // max(len(items), 8)
-        for clave_icono, etiqueta, callback in items:
+        ancho_referencia = ancho_disponible // max(len(items_fila1), len(items_fila2), 8)
+        for clave_icono, etiqueta, callback in items_fila1:
             boton = self._crear_boton_tarea(clave_icono, etiqueta, callback, ancho_referencia)
             self.layout_barra_tareas.addWidget(boton, stretch=1)
+        for clave_icono, etiqueta, callback in items_fila2:
+            boton = self._crear_boton_tarea(clave_icono, etiqueta, callback, ancho_referencia)
+            self.layout_barra_tareas_2.addWidget(boton, stretch=1)
 
     def _crear_boton_tarea(self, clave_icono: str, etiqueta: str, callback, ancho_referencia: int) -> QToolButton:
         boton = QToolButton()
@@ -556,19 +604,24 @@ class MainMenuWindow(QMainWindow):
             # 2026-08-16: "faltan todos los listados") — un botón por
             # reporte, cada uno abre la misma ventana con ese listado ya
             # elegido (el combo sigue ahí para cambiar sin volver al menú).
+            # Orden temático de izquierda a derecha (feedback del usuario,
+            # 2026-08-18, segunda ronda): Clientes, Cta.Cte., Cobranza,
+            # Ventas, Impuestos — con 12 botones, la barra se parte en 2
+            # líneas (ver `_reconstruir_barra_tareas`) y este orden sigue
+            # siendo "izquierda a derecha, arriba y después abajo".
             "Listados": [
                 ("clientes", "Clientes", lambda r="clientes": self._abrir_listado(r)),
-                ("precios", "Lista de Precios", lambda r="precios": self._abrir_listado(r)),
-                ("ventas", "Subdiario de Ventas", lambda r="subdiario_ventas": self._abrir_listado(r)),
-                ("cobranzas", "Subd. de Cobranzas AFIP", lambda r="subdiario_cobranzas": self._abrir_listado(r)),
-                ("listados", "Ingresos Brutos", lambda r="ingresos_brutos": self._abrir_listado(r)),
                 ("ctacte", "Deuda Pendiente", lambda r="deuda_pendiente": self._abrir_listado(r)),
-                ("cobranzas", "Planilla de Cobranzas", lambda r="planilla_cobranzas": self._abrir_listado(r)),
                 ("ctacte", "Estado de Cuenta", lambda r="estado_cuenta": self._abrir_listado(r)),
                 ("ctacte", "Saldos de Cta. Cte.", lambda r="saldos": self._abrir_listado(r)),
-                ("constancia_afip", "Percepciones ARBA", lambda r="percepciones_arba": self._abrir_listado(r)),
+                ("cobranzas", "Subd. de Cobranzas AFIP", lambda r="subdiario_cobranzas": self._abrir_listado(r)),
+                ("cobranzas", "Planilla de Cobranzas", lambda r="planilla_cobranzas": self._abrir_listado(r)),
                 ("cobranzas", "Comis. x Cobranzas", lambda r="comisiones_cobranzas": self._abrir_listado(r)),
+                ("precios", "Lista de Precios", lambda r="precios": self._abrir_listado(r)),
+                ("ventas", "Subdiario de Ventas", lambda r="subdiario_ventas": self._abrir_listado(r)),
                 ("ventas", "Subd. Vtas. (Comisiones)", lambda r="subdiario_comisiones": self._abrir_listado(r)),
+                ("listados", "Ingresos Brutos", lambda r="ingresos_brutos": self._abrir_listado(r)),
+                ("constancia_afip", "Percepciones ARBA", lambda r="percepciones_arba": self._abrir_listado(r)),
             ],
             "Varios": [
                 ("cotizacion", "Cotización del Dólar", self._abrir_cotizacion),

@@ -106,7 +106,8 @@ class TablasWindow(QMainWindow):
     def __init__(self, parent: QWidget | None = None):
         super().__init__(parent)
         self.setWindowTitle("ABM de Tablas")
-        self.resize(880, 560)
+        # +20% ancho (feedback del usuario, 2026-08-18, segunda ronda).
+        self.resize(1056, 560)
 
         self.db = get_session()
         self.repos = RepositoryFactory(self.db)
@@ -154,10 +155,12 @@ class TablasWindow(QMainWindow):
         cuerpo_widget = QWidget()
         cuerpo = QHBoxLayout(cuerpo_widget)
         cuerpo.setContentsMargins(8, 8, 8, 8)
-        # Panel izquierdo más ancho (feedback del usuario, 2026-08-18) —
-        # antes 1:2 (33%/67%), ahora 2:3 (40%/60%).
-        cuerpo.addWidget(self._armar_lista(), stretch=2)
-        cuerpo.addWidget(self._armar_editor(), stretch=3)
+        # Panel izquierdo todavía más ancho (feedback del usuario,
+        # 2026-08-18, segunda ronda: "sobretodo el panel izquierdo de
+        # los registros") — antes 1:2 (33%/67%), después 2:3 (40%/60%),
+        # ahora 1:1 (50%/50%).
+        cuerpo.addWidget(self._armar_lista(), stretch=1)
+        cuerpo.addWidget(self._armar_editor(), stretch=1)
         layout.addWidget(cuerpo_widget, stretch=1)
 
         barra_botones = self._armar_barra_botones()

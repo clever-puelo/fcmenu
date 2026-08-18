@@ -25,8 +25,8 @@ class DespachosConsultaWindow(QMainWindow):
     def __init__(self, parent: QWidget | None = None):
         super().__init__(parent)
         self.setWindowTitle("Consulta de Despachos")
-        # +30% ancho / +80% alto (feedback del usuario, 2026-08-18).
-        self.resize(728, 936)
+        # +60% alto más (feedback del usuario, 2026-08-18, segunda ronda).
+        self.resize(728, 1498)
 
         self.db = get_session()
         self.repos = RepositoryFactory(self.db)

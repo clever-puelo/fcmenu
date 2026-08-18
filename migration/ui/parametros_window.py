@@ -31,6 +31,7 @@ from __future__ import annotations
 
 from PyQt6.QtWidgets import (
     QFormLayout,
+    QGridLayout,
     QGroupBox,
     QHBoxLayout,
     QLabel,
@@ -56,7 +57,10 @@ class ParametrosWindow(QMainWindow):
     def __init__(self, parent: QWidget | None = None):
         super().__init__(parent)
         self.setWindowTitle("Parámetros")
-        self.resize(640, 420)
+        # 3 números por línea en vez de 1 sola columna apilada (feedback
+        # del usuario, 2026-08-18, segunda ronda: "para reducir el largo
+        # de la ventana") — bastante menos alto hace falta ahora.
+        self.resize(640, 320)
 
         self.db = get_session()
         self.repos = RepositoryFactory(self.db)
@@ -84,73 +88,104 @@ class ParametrosWindow(QMainWindow):
         layout.addStretch()
         layout.addLayout(self._armar_barra_botones())
 
+    # Ancho máximo de un campo numérico — "que no supere el lugar para
+    # 10 números" (feedback del usuario, 2026-08-18, segunda ronda),
+    # aplicado parejo a todos los campos numéricos de la ventana
+    # (Números de Comprobante, IVA, Punto de Venta, Monto Deuda, Días
+    # Vto.) — no a "Empresa", que es texto libre, no un número.
+    ANCHO_CAMPO_NUMERICO = 90
+
+    def _grid_numeros(self, campos: list[tuple[str, QLineEdit]], columnas: int = 3) -> QGridLayout:
+        """3 campos numéricos por línea (feedback del usuario, 2026-08-18,
+        segunda ronda: "Colocar 3 numeros por linea, para reducir el
+        largo de la ventana") en vez de 1 sola columna apilada — cada
+        campo se angosta a `ANCHO_CAMPO_NUMERICO`."""
+        grid = QGridLayout()
+        grid.setHorizontalSpacing(14)
+        grid.setVerticalSpacing(6)
+        for i, (etiqueta, campo) in enumerate(campos):
+            campo.setMaximumWidth(self.ANCHO_CAMPO_NUMERICO)
+            fila, columna = divmod(i, columnas)
+            grid.addWidget(QLabel(etiqueta), fila, columna * 2)
+            grid.addWidget(campo, fila, columna * 2 + 1)
+        return grid
+
     def _armar_grupo_comprobantes(self) -> QGroupBox:
         box = QGroupBox("Números de Comprobante")
-        form = QFormLayout(box)
 
         self.txt_factura_a = QLineEdit("0")
-        form.addRow("Factura A :", self.txt_factura_a)
         self.txt_nc_a = QLineEdit("0")
-        form.addRow("N.Créd. A :", self.txt_nc_a)
         self.txt_nd_a = QLineEdit("0")
-        form.addRow("N.Déb. A :", self.txt_nd_a)
+        self.txt_factura_b = QLineEdit("0")
+        self.txt_nc_b = QLineEdit("0")
+        self.txt_nd_b = QLineEdit("0")
+        self.txt_recibo = QLineEdit("0")
         self.txt_cotizacion = QLineEdit("0")
         self.txt_cotizacion.setToolTip("Último Nro. de Cotización impreso")
-        form.addRow("Cotizac. :", self.txt_cotizacion)
-        self.txt_factura_b = QLineEdit("0")
-        form.addRow("Factura B :", self.txt_factura_b)
-        self.txt_nc_b = QLineEdit("0")
-        form.addRow("N.Créd. B :", self.txt_nc_b)
-        self.txt_nd_b = QLineEdit("0")
-        form.addRow("N.Déb. B :", self.txt_nd_b)
-        self.txt_recibo = QLineEdit("0")
-        form.addRow("Recibo :", self.txt_recibo)
 
+        box.setLayout(
+            self._grid_numeros(
+                [
+                    ("Factura A :", self.txt_factura_a),
+                    ("N.Créd. A :", self.txt_nc_a),
+                    ("N.Déb. A :", self.txt_nd_a),
+                    ("Factura B :", self.txt_factura_b),
+                    ("N.Créd. B :", self.txt_nc_b),
+                    ("N.Déb. B :", self.txt_nd_b),
+                    ("Recibo :", self.txt_recibo),
+                    ("Cotizac. :", self.txt_cotizacion),
+                ]
+            )
+        )
         return box
 
     def _armar_grupo_iva(self) -> QGroupBox:
         box = QGroupBox("Porcentaje de I.V.A.")
-        form = QFormLayout(box)
         self.txt_iva_inscripto = QLineEdit("0")
-        form.addRow("Inscripto :", self.txt_iva_inscripto)
         self.txt_iva_no_inscripto = QLineEdit("0")
         self.txt_iva_no_inscripto.setToolTip(
             "Sólo referencia histórica: Responsable No Inscripto fue eliminado por AFIP en 2003."
         )
-        form.addRow("No Inscripto :", self.txt_iva_no_inscripto)
+        box.setLayout(
+            self._grid_numeros(
+                [("Inscripto :", self.txt_iva_inscripto), ("No Inscripto :", self.txt_iva_no_inscripto)]
+            )
+        )
         return box
 
     def _armar_grupo_punto_venta(self) -> QGroupBox:
         box = QGroupBox("Punto de Venta")
-        form = QFormLayout(box)
         self.txt_punto_venta = QLineEdit("0")
-        form.addRow("Nro. :", self.txt_punto_venta)
+        box.setLayout(self._grid_numeros([("Nro. :", self.txt_punto_venta)]))
         return box
 
     def _armar_grupo_varios(self) -> QGroupBox:
         box = QGroupBox("Varios")
-        form = QFormLayout(box)
+        layout = QVBoxLayout(box)
 
+        form_empresa = QFormLayout()
         self.txt_empresa = UpperCaseLineEdit()
         self.txt_empresa.setMaxLength(80)
-        form.addRow("Empresa :", self.txt_empresa)
+        form_empresa.addRow("Empresa :", self.txt_empresa)
+        layout.addLayout(form_empresa)
 
         self.txt_monto_deuda = QLineEdit("0")
         self.txt_monto_deuda.setToolTip("Monto Mínimo de Deuda para Aviso en el Facturador")
-        form.addRow("Monto Deuda :", self.txt_monto_deuda)
-
         self.txt_dias_vto = QLineEdit("0")
         self.txt_dias_vto.setToolTip("Cantidad de días para aviso en el Facturador")
-        form.addRow("Días Vto. :", self.txt_dias_vto)
+        layout.addLayout(
+            self._grid_numeros([("Monto Deuda :", self.txt_monto_deuda), ("Días Vto. :", self.txt_dias_vto)])
+        )
 
         fila_percep = QHBoxLayout()
+        fila_percep.addWidget(QLabel("C/Percep. IIBB :"))
         self.radio_percep_si = QRadioButton("Sí")
         self.radio_percep_no = QRadioButton("No")
         self.radio_percep_no.setChecked(True)
         fila_percep.addWidget(self.radio_percep_si)
         fila_percep.addWidget(self.radio_percep_no)
         fila_percep.addStretch()
-        form.addRow("C/Percep. IIBB :", fila_percep)
+        layout.addLayout(fila_percep)
 
         return box
 

@@ -32,6 +32,7 @@ from migration.db import get_session
 from migration.repository import RepositoryFactory
 from migration.services import ArregloSubdiarioService
 
+from .cliente_busqueda_window import ClienteBusquedaWindow
 from .cliente_detalle_dialog import CIVA_OPCIONES
 from .facturador_window import FORMAS_PEDIDO
 from .widgets import EnterAsTabFilter, EnteroLineEdit, MontoLineEdit, UpperCaseLineEdit, crear_boton_hoy
@@ -54,7 +55,11 @@ class ArregloSubdiarioWindow(QMainWindow):
     def __init__(self, parent: QWidget | None = None):
         super().__init__(parent)
         self.setWindowTitle("Arreglos — Subdiario Ventas")
-        self.resize(680, 640)
+        # Más baja (feedback del usuario, 2026-08-18, segunda ronda: "se
+        # sale del panel central, comprimir datos si es necesario") — la
+        # cabecera y el panel de Cliente se comprimieron a menos filas
+        # (ver `_armar_cabecera`/`_armar_cliente`), así entra sin scroll.
+        self.resize(680, 480)
 
         self.db = get_session()
         self.repos = RepositoryFactory(self.db)
@@ -115,15 +120,22 @@ class ArregloSubdiarioWindow(QMainWindow):
             self.combo_tipo.addItem(f"{codigo}-{etiqueta}", codigo)
         form.addRow("Tipo Cpbte. :", self.combo_tipo)
 
+        # Letra, Prefijo y Nro. Cpbte. en la misma línea (feedback del
+        # usuario, 2026-08-18, segunda ronda) — antes 3 filas propias.
         self.combo_letra = QComboBox()
         self.combo_letra.addItems(LETRAS)
-        form.addRow("Letra :", self.combo_letra)
-
         self.txt_prefijo = EnteroLineEdit("0001")
-        form.addRow("Prefijo (Pto.Vta.) :", self.txt_prefijo)
-
+        self.txt_prefijo.setMaximumWidth(70)
         self.txt_cpbte = EnteroLineEdit()
-        form.addRow("Nro. Cpbte. :", self.txt_cpbte)
+        self.txt_cpbte.setMaximumWidth(90)
+        fila_cpbte = QHBoxLayout()
+        fila_cpbte.addWidget(self.combo_letra)
+        fila_cpbte.addWidget(QLabel("Prefijo (Pto.Vta.) :"))
+        fila_cpbte.addWidget(self.txt_prefijo)
+        fila_cpbte.addWidget(QLabel("Nro. Cpbte. :"))
+        fila_cpbte.addWidget(self.txt_cpbte)
+        fila_cpbte.addStretch()
+        form.addRow("Letra :", fila_cpbte)
 
         self.lbl_estado = QLabel()
         self.lbl_estado.setStyleSheet("color: #b00020; font-weight: bold;")
@@ -138,7 +150,16 @@ class ArregloSubdiarioWindow(QMainWindow):
         self.spin_clte = QSpinBox()
         self.spin_clte.setRange(0, 999999)
         self.spin_clte.setButtonSymbols(QSpinBox.ButtonSymbols.NoButtons)
-        form.addRow("Cliente :", self.spin_clte)
+        # Botón de búsqueda de Cliente (feedback del usuario, 2026-08-18,
+        # segunda ronda) — mismo buscador modal ya usado en Facturador/
+        # Recibo/Cta.Cte./Arreglo Cta.Cte.
+        self.btn_buscar_cliente = QPushButton("Buscar...")
+        self.btn_buscar_cliente.clicked.connect(self._on_buscar_cliente)
+        fila_clte = QHBoxLayout()
+        fila_clte.addWidget(self.spin_clte)
+        fila_clte.addWidget(self.btn_buscar_cliente)
+        fila_clte.addStretch()
+        form.addRow("Cliente :", fila_clte)
 
         self.txt_nombre = UpperCaseLineEdit()
         self.txt_nombre.setMaxLength(100)
@@ -148,19 +169,27 @@ class ArregloSubdiarioWindow(QMainWindow):
         self.txt_pcia.setMaxLength(1)
         form.addRow("Pcia. (letra) :", self.txt_pcia)
 
+        # Cod.IVA y CUIT en la misma línea (feedback del usuario,
+        # 2026-08-18, segunda ronda) — antes 2 filas propias.
         self.txt_cuit = EnteroLineEdit()
-        form.addRow("CUIT :", self.txt_cuit)
-
         self.combo_civa = QComboBox()
         for codigo, etiqueta in CIVA_OPCIONES:
             self.combo_civa.addItem(etiqueta, codigo)
-        form.addRow("Cod. IVA :", self.combo_civa)
+        fila_civa_cuit = QHBoxLayout()
+        fila_civa_cuit.addWidget(self.txt_cuit)
+        fila_civa_cuit.addWidget(QLabel("Cod. IVA :"))
+        fila_civa_cuit.addWidget(self.combo_civa)
+        form.addRow("CUIT :", fila_civa_cuit)
 
+        # Vendedor y Zona en la misma línea (feedback del usuario,
+        # 2026-08-18, segunda ronda) — antes 2 filas propias.
         self.combo_vend = QComboBox()
-        form.addRow("Vendedor :", self.combo_vend)
-
         self.combo_zona = QComboBox()
-        form.addRow("Zona :", self.combo_zona)
+        fila_vend_zona = QHBoxLayout()
+        fila_vend_zona.addWidget(self.combo_vend)
+        fila_vend_zona.addWidget(QLabel("Zona :"))
+        fila_vend_zona.addWidget(self.combo_zona)
+        form.addRow("Vendedor :", fila_vend_zona)
 
         self.combo_cvta = QComboBox()
         form.addRow("Cond. Vta. :", self.combo_cvta)
@@ -241,6 +270,14 @@ class ArregloSubdiarioWindow(QMainWindow):
         self._seleccionar_por_data(self.combo_vend, cliente.VEND)
         self._seleccionar_por_data(self.combo_zona, cliente.ZONA)
         self._seleccionar_por_data(self.combo_cvta, cliente.CVTA)
+
+    def _on_buscar_cliente(self) -> None:
+        dialogo = ClienteBusquedaWindow(parent=self, modo_seleccion=True)
+        dialogo.exec()
+        if dialogo.cliente_elegido is None:
+            return
+        self.spin_clte.setValue(dialogo.cliente_elegido.CODIGO)
+        self._on_cliente_confirmado()
 
     @staticmethod
     def _seleccionar_por_data(combo: QComboBox, valor: int | None) -> None:

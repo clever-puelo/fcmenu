@@ -52,8 +52,8 @@ class ChequesConsultaWindow(QMainWindow):
     def __init__(self, parent: QWidget | None = None):
         super().__init__(parent)
         self.setWindowTitle("Consulta de Cheques")
-        # +30% alto (feedback del usuario, 2026-08-18).
-        self.resize(1000, 806)
+        # +30% alto más (feedback del usuario, 2026-08-18, segunda ronda).
+        self.resize(1000, 1048)
 
         self.db = get_session()
         self.repos = RepositoryFactory(self.db)

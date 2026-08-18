@@ -93,7 +93,8 @@ class FacturadorWindow(QMainWindow):
     def __init__(self, parent: QWidget | None = None, *, afip: Optional[NumeracionYCAEProvider] = None):
         super().__init__(parent)
         self.setWindowTitle("Facturador")
-        self.resize(1000, 700)
+        # +15% ancho (feedback del usuario, 2026-08-18, segunda ronda).
+        self.resize(1150, 700)
 
         self.db = get_session()
         self.repos = RepositoryFactory(self.db)
@@ -134,6 +135,10 @@ class FacturadorWindow(QMainWindow):
         grupo = QGroupBox("Cabecera — Factura")
         layout = QVBoxLayout(grupo)
 
+        # Botón "Nota Clte." al extremo derecho, justo arriba de
+        # "Nueva" (feedback del usuario, 2026-08-18, segunda ronda) —
+        # queda último en la fila, igual que "Nueva" en `fila_datos`
+        # más abajo, así los dos quedan alineados en columna.
         fila_cliente = QHBoxLayout()
         self.btn_elegir_cliente = QPushButton(self.TEXTO_BTN_ELEGIR_CLIENTE)
         self.btn_elegir_cliente.clicked.connect(self._on_elegir_cliente)
@@ -144,8 +149,6 @@ class FacturadorWindow(QMainWindow):
         self.btn_nota_cliente.setEnabled(False)
         self.btn_nota_cliente.clicked.connect(self._on_nota_cliente)
         fila_cliente.addWidget(self.btn_nota_cliente)
-        self.lbl_letra = QLabel("Letra: —")
-        fila_cliente.addWidget(self.lbl_letra)
         layout.addLayout(fila_cliente)
 
         fila_datos = QHBoxLayout()
@@ -164,8 +167,17 @@ class FacturadorWindow(QMainWindow):
         fila_datos.addWidget(self.chk_en_dolares)
 
         fila_datos.addStretch()
+        # "Letra" debajo de "Próx. Nº" (feedback del usuario, 2026-08-18,
+        # segunda ronda) — antes "Letra" vivía en `fila_cliente`, sin
+        # relación visual con el número de comprobante; ahora las dos
+        # quedan apiladas en una sola columna, justo antes de "Nueva".
+        bloque_numero = QVBoxLayout()
+        bloque_numero.setSpacing(0)
         self.lbl_proximo_numero = QLabel("Próx. Nº: —")
-        fila_datos.addWidget(self.lbl_proximo_numero)
+        bloque_numero.addWidget(self.lbl_proximo_numero)
+        self.lbl_letra = QLabel("Letra: —")
+        bloque_numero.addWidget(self.lbl_letra)
+        fila_datos.addLayout(bloque_numero)
         self.btn_nueva = QPushButton("Nueva")
         self.btn_nueva.clicked.connect(self._nueva_factura)
         fila_datos.addWidget(self.btn_nueva)

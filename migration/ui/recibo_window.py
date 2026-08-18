@@ -122,9 +122,9 @@ class ReciboWindow(QMainWindow):
     def __init__(self, parent: QWidget | None = None):
         super().__init__(parent)
         self.setWindowTitle("Recibo")
-        # -10% de alto / +20% de ancho (feedback del usuario,
-        # 2026-08-18: "sigue siendo larga... Agrandar de ancho 20%").
-        self.resize(1200, 648)
+        # +10% ancho / -15% alto (feedback del usuario, 2026-08-18,
+        # segunda ronda).
+        self.resize(1320, 551)
 
         self.db = get_session()
         self.repos = RepositoryFactory(self.db)

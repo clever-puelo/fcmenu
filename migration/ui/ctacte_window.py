@@ -37,7 +37,7 @@ from __future__ import annotations
 
 from datetime import date
 
-from PyQt6.QtCore import Qt
+from PyQt6.QtCore import Qt, QTimer
 from PyQt6.QtWidgets import (
     QComboBox,
     QFormLayout,
@@ -94,8 +94,9 @@ class CtaCteWindow(QMainWindow):
     def __init__(self, parent: QWidget | None = None):
         super().__init__(parent)
         self.setWindowTitle("Cuentas Corrientes")
-        # +20% ancho / +20% alto (feedback del usuario, 2026-08-18).
-        self.resize(1320, 864)
+        # +15% ancho / +30% alto (feedback del usuario, 2026-08-18,
+        # segunda ronda).
+        self.resize(1518, 1123)
 
         self.db = get_session()
         self.repos = RepositoryFactory(self.db)
@@ -105,7 +106,13 @@ class CtaCteWindow(QMainWindow):
         self._filas_extracto: list[FilaExtracto] = []
 
         self._construir_ui()
-        self._on_otro_cliente()
+        # Primero se muestra la ventana, recién después se pide el
+        # Cliente (feedback del usuario, 2026-08-18, segunda ronda) —
+        # mismo criterio ya aplicado en Facturador/Recibo:
+        # `QTimer.singleShot(0, ...)` deja que esta ventana se muestre
+        # primero; llamado directo acá (dentro de `__init__`) el
+        # buscador modal aparecía ANTES que la propia ventana.
+        QTimer.singleShot(0, self._on_otro_cliente)
 
     # ------------------------------------------------------------------
     def _construir_ui(self) -> None:

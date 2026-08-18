@@ -60,7 +60,8 @@ class VentasArticuloWindow(QMainWindow):
     def __init__(self, parent: QWidget | None = None):
         super().__init__(parent)
         self.setWindowTitle("Ventas por Artículo")
-        self.resize(1100, 640)
+        # +30% alto (feedback del usuario, 2026-08-18, segunda ronda).
+        self.resize(1100, 832)
 
         self.db = get_session()
         self.repos = RepositoryFactory(self.db)

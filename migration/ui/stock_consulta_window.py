@@ -43,8 +43,9 @@ class StockConsultaWindow(QMainWindow):
     def __init__(self, parent: QWidget | None = None):
         super().__init__(parent)
         self.setWindowTitle("Consulta de Stock")
-        # +39% ancho / +50% alto (feedback del usuario, 2026-08-18).
-        self.resize(1251, 900)
+        # +30% ancho / +60% alto más (feedback del usuario, 2026-08-18,
+        # segunda ronda).
+        self.resize(1626, 1440)
 
         self.db = get_session()
         self.repos = RepositoryFactory(self.db)

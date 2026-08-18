@@ -33,8 +33,14 @@ from migration.services import FacturasEmitidasService
 from .factura_emitida_detalle_dialog import FacturaEmitidaDetalleDialog
 from .widgets import TablaBusqueda, crear_boton_hoy
 
-COLUMNAS = ["Fecha", "T. Cpbte.", "Número", "Imp. Bruto", "Imp. IVA", "Imp. Neto", "Cliente"]
-COL_BRUTO, COL_IVA, COL_NETO = 3, 4, 5
+# Cód. de Cliente en columna separada de la Razón Social (feedback del
+# usuario, 2026-08-18, segunda ronda: "para poder ordenar
+# alfabéticamente") — antes venían concatenados en una sola celda de
+# texto ("123 FULANO SA"), lo que impedía ordenar por Cliente de verdad
+# (ordenaba por el código como prefijo del texto). `TablaBusqueda` ya
+# ordena cada columna al clic sobre su título (ver `widgets.py`).
+COLUMNAS = ["Fecha", "T. Cpbte.", "Número", "Imp. Bruto", "Imp. IVA", "Imp. Neto", "Cód.", "Cliente"]
+COL_BRUTO, COL_IVA, COL_NETO, COL_COD_CLIENTE = 3, 4, 5, 6
 
 OPCIONES_LIMITE = [5, 10, 25, 50, 75, 100, 150]
 
@@ -43,8 +49,9 @@ class FacturasEmitidasWindow(QMainWindow):
     def __init__(self, parent: QWidget | None = None):
         super().__init__(parent)
         self.setWindowTitle("Facturas Emitidas")
-        # +100% ancho / +50% alto (feedback del usuario, 2026-08-18).
-        self.resize(2100, 900)
+        # +30% ancho / +60% alto (feedback del usuario, 2026-08-18,
+        # segunda ronda).
+        self.resize(2730, 1440)
 
         self.db = get_session()
         self.repos = RepositoryFactory(self.db)
@@ -80,7 +87,7 @@ class FacturasEmitidasWindow(QMainWindow):
         fila_filtro.addWidget(btn_cerrar)
         layout.addLayout(fila_filtro)
 
-        self.tabla = TablaBusqueda(COLUMNAS, columnas_derecha=(COL_BRUTO, COL_IVA, COL_NETO))
+        self.tabla = TablaBusqueda(COLUMNAS, columnas_derecha=(COL_BRUTO, COL_IVA, COL_NETO, COL_COD_CLIENTE))
         layout.addWidget(self.tabla, stretch=1)
 
         fila_totales = QHBoxLayout()
@@ -116,7 +123,8 @@ class FacturasEmitidasWindow(QMainWindow):
                     format_decimal(f.bruto),
                     format_decimal(f.iva),
                     format_decimal(f.neto),
-                    f"{f.clte or ''} {f.cliente_nombre}".strip(),
+                    str(f.clte or ""),
+                    f.cliente_nombre,
                 ],
                 f.factura,
             )
