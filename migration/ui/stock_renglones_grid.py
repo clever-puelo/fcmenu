@@ -70,6 +70,15 @@ class StockRenglonesGrid(QTableWidget):
         self._celda_editando: Optional[tuple[int, int]] = None
 
         self.setHorizontalHeaderLabels(COLUMNAS)
+        # Anchos explícitos (feedback del usuario, 2026-08-19, con
+        # captura de pantalla: el título "Sección / Código" quedaba
+        # cortado) — el ancho por defecto de Qt para una columna nueva
+        # es de apenas 100px, no le alcanza a ese título; "Cantidad"
+        # (última columna) se estira para ocupar lo que sobra.
+        self.setColumnWidth(COL_CODIGO, 160)
+        self.setColumnWidth(COL_DESCRIPCION, 260)
+        self.setColumnWidth(COL_STOCK, 110)
+        self.horizontalHeader().setStretchLastSection(True)
         self.setSelectionBehavior(QAbstractItemView.SelectionBehavior.SelectItems)
         self.setSelectionMode(QAbstractItemView.SelectionMode.SingleSelection)
         self.verticalHeader().setVisible(False)

@@ -92,8 +92,19 @@ class PdfPreviewDialog(QDialog):
     def _armar_barra_zoom(self) -> QHBoxLayout:
         fila = QHBoxLayout()
 
-        btn_zoom_menos = QPushButton("−")
-        btn_zoom_menos.setMaximumWidth(32)
+        # Botones angostos con su propio padding chico (feedback del
+        # usuario, 2026-08-19: "falta el signo '-' y '+' en los botones
+        # de zoom") — bug real de estilo: la hoja de estilo QSS global
+        # de la app (`theme.py`) le da a TODO `QPushButton` un padding
+        # de 16px por lado; con `setMaximumWidth(32)` ese padding solo
+        # ya ocupaba el ancho completo del botón, sin dejarle lugar al
+        # signo — quedaba dibujado pero recortado a 0px, invisible.
+        # También se cambia el signo "−" (MINUS SIGN, U+2212) por un
+        # guion ASCII simple "-", más seguro entre fuentes.
+        estilo_boton_zoom = "padding: 2px 4px;"
+        btn_zoom_menos = QPushButton("-")
+        btn_zoom_menos.setStyleSheet(estilo_boton_zoom)
+        btn_zoom_menos.setFixedWidth(32)
         btn_zoom_menos.setToolTip("Disminuir zoom")
         btn_zoom_menos.clicked.connect(self._on_zoom_menos)
         fila.addWidget(btn_zoom_menos)
@@ -104,7 +115,8 @@ class PdfPreviewDialog(QDialog):
         fila.addWidget(self.lbl_zoom)
 
         btn_zoom_mas = QPushButton("+")
-        btn_zoom_mas.setMaximumWidth(32)
+        btn_zoom_mas.setStyleSheet(estilo_boton_zoom)
+        btn_zoom_mas.setFixedWidth(32)
         btn_zoom_mas.setToolTip("Aumentar zoom")
         btn_zoom_mas.clicked.connect(self._on_zoom_mas)
         fila.addWidget(btn_zoom_mas)

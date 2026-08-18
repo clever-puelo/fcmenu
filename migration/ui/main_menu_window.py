@@ -809,22 +809,39 @@ class MainMenuWindow(QMainWindow):
         recalcula acá contra el panel MDI real (ver docstring de esa
         constante) — pisa el tamaño que la propia ventana ya traía de
         su `__init__` (útil sólo para cuando se corre standalone, sin
-        este MDI de por medio)."""
+        este MDI de por medio).
+
+        **Piso de seguridad = `minimumSizeHint()` real del contenido**
+        (feedback del usuario, 2026-08-19, con capturas de pantalla:
+        "algunas muy poco, otras son irreconocibles... que entren todos
+        los campos completos en el área") — bug real encontrado:
+        a diferencia de una ventana normal (que el propio SO no deja
+        angostar más allá de lo que su layout necesita), un
+        `QMdiSubWindow` SÍ se puede forzar por `resize()` a un tamaño
+        MENOR al que su contenido necesita — ahí los campos quedan
+        superpuestos/ilegibles (confirmado con un script: Arreglo
+        Subdiario necesita mínimo 630×578, Recibo 1384×365 — el % que
+        tenían calculado antes les daba menos que eso en un panel MDI
+        chico, y se rompían). Nunca se resigna por debajo de ese
+        mínimo real, aunque eso implique que la ventana quede más ancha
+        que el panel visible (con scroll del propio `QMdiArea`, mejor
+        que campos rotos)."""
         area = self.mdi.viewport().size()
         nombre_clase = type(ventana).__name__
+        minimo = subventana.minimumSizeHint()
         if nombre_clase == "ListadosWindow":
             margen_lateral = _mm_a_px(MARGEN_LISTADOS_LATERAL_MM)
             margen_superior = _mm_a_px(MARGEN_LISTADOS_SUPERIOR_MM)
-            ancho = max(area.width() - 2 * margen_lateral, 300)
-            alto = max(area.height() - 2 * margen_superior, 300)
+            ancho = max(area.width() - 2 * margen_lateral, minimo.width(), 300)
+            alto = max(area.height() - 2 * margen_superior, minimo.height(), 300)
             subventana.resize(ancho, alto)
             subventana.move(margen_lateral, margen_superior)
             return
         porcentajes = PCT_MDI_POR_CLASE.get(nombre_clase)
         if porcentajes is not None:
             ancho_pct, alto_pct = porcentajes
-            ancho = max(round(area.width() * ancho_pct / 100), 300)
-            alto = max(round(area.height() * alto_pct / 100), 300)
+            ancho = max(round(area.width() * ancho_pct / 100), minimo.width(), 300)
+            alto = max(round(area.height() * alto_pct / 100), minimo.height(), 300)
             subventana.resize(ancho, alto)
         x = max((area.width() - subventana.width()) // 2, 0)
         y = max((area.height() - subventana.height()) // 2, 0)
