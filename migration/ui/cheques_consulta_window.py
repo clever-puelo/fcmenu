@@ -34,7 +34,7 @@ from migration.repository import RepositoryFactory
 from migration.services import ChequeService
 
 from .cheque_detalle_dialog import ChequeDetalleDialog
-from .widgets import TablaBusqueda, crear_boton_hoy
+from .widgets import TablaBusqueda, crear_boton_hoy, redimensionar_pct_pantalla
 
 CANTIDADES = [5, 10, 25, 50, 75, 100, 150]
 ESTADOS = [
@@ -52,9 +52,9 @@ class ChequesConsultaWindow(QMainWindow):
     def __init__(self, parent: QWidget | None = None):
         super().__init__(parent)
         self.setWindowTitle("Consulta de Cheques")
-        # +30% alto más (feedback del usuario, 2026-08-18, tercera ronda
-        # — repitió el mismo pedido, confirmó sumarlo de nuevo).
-        self.resize(1000, 1362)
+        # % de la pantalla real (convención de sistema #11, feedback del
+        # usuario, 2026-08-19) — valor sugerido, a ajustar tras probar.
+        redimensionar_pct_pantalla(self, 80, 90)
 
         self.db = get_session()
         self.repos = RepositoryFactory(self.db)

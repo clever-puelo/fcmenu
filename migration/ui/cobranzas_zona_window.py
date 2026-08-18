@@ -34,6 +34,7 @@ from migration.repository import RepositoryFactory
 from migration.services import CuentaCorrienteService
 
 from .procesando_dialog import ejecutar_con_progreso
+from .widgets import redimensionar_pct_pantalla
 
 COLUMNAS = ["Cliente / Comprobante", "Tipo", "Fecha", "Fec.Vto.", "Importe", "Debe", "Días Venc.", "Estado"]
 COL_TIPO, COL_FECHA, COL_FECVTO, COL_IMPORTE, COL_DEBE, COL_DIAS, COL_ESTADO = range(1, 8)
@@ -46,10 +47,9 @@ class CobranzasZonaWindow(QMainWindow):
     def __init__(self, parent: QWidget | None = None):
         super().__init__(parent)
         self.setWindowTitle("Cobranzas por Zona")
-        # +30% ancho / +60% alto más (feedback del usuario, 2026-08-18,
-        # tercera ronda — el usuario repitió el mismo pedido, confirmó
-        # sumarlo de nuevo).
-        self.resize(1690, 1587)
+        # % de la pantalla real (convención de sistema #11, feedback del
+        # usuario, 2026-08-19) — valor sugerido, a ajustar tras probar.
+        redimensionar_pct_pantalla(self, 95, 90)
 
         self.db = get_session()
         self.repos = RepositoryFactory(self.db)

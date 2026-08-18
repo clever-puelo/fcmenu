@@ -31,7 +31,7 @@ from migration.repository import RepositoryFactory
 from migration.services import FacturasEmitidasService
 
 from .factura_emitida_detalle_dialog import FacturaEmitidaDetalleDialog
-from .widgets import TablaBusqueda, crear_boton_hoy, crear_recuadro_destacado
+from .widgets import TablaBusqueda, crear_boton_hoy, crear_recuadro_destacado, redimensionar_pct_pantalla
 
 # Cód. de Cliente en columna separada de la Razón Social (feedback del
 # usuario, 2026-08-18, segunda ronda: "para poder ordenar
@@ -49,10 +49,9 @@ class FacturasEmitidasWindow(QMainWindow):
     def __init__(self, parent: QWidget | None = None):
         super().__init__(parent)
         self.setWindowTitle("Facturas Emitidas")
-        # +30% ancho / +60% alto más (feedback del usuario, 2026-08-18,
-        # tercera ronda — el usuario repitió el mismo pedido, confirmó
-        # sumarlo de nuevo).
-        self.resize(3549, 2304)
+        # % de la pantalla real (convención de sistema #11, feedback del
+        # usuario, 2026-08-19) — valor sugerido, a ajustar tras probar.
+        redimensionar_pct_pantalla(self, 97, 90)
 
         self.db = get_session()
         self.repos = RepositoryFactory(self.db)

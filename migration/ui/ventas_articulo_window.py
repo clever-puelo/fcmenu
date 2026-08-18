@@ -35,7 +35,7 @@ from migration.repository import RepositoryFactory
 from migration.services import EstadisticaVentasService, NodoAgrupado
 
 from .factura_renglon import posiciones_activas_seccion
-from .widgets import EnteroLineEdit
+from .widgets import EnteroLineEdit, redimensionar_pct_pantalla
 
 MESES = [
     "Enero", "Febrero", "Marzo", "Abril", "Mayo", "Junio",
@@ -60,9 +60,9 @@ class VentasArticuloWindow(QMainWindow):
     def __init__(self, parent: QWidget | None = None):
         super().__init__(parent)
         self.setWindowTitle("Ventas por Artículo")
-        # +30% alto más (feedback del usuario, 2026-08-18, tercera ronda
-        # — repitió el mismo pedido, confirmó sumarlo de nuevo).
-        self.resize(1100, 1082)
+        # % de la pantalla real (convención de sistema #11, feedback del
+        # usuario, 2026-08-19) — valor sugerido, a ajustar tras probar.
+        redimensionar_pct_pantalla(self, 88, 80)
 
         self.db = get_session()
         self.repos = RepositoryFactory(self.db)

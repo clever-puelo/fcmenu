@@ -32,7 +32,7 @@ from migration.services import TotalesDiariosService
 
 from .total_diario_detalle_dialog import TotalDiarioDetalleDialog
 from .total_mensual_dialog import TotalMensualDialog
-from .widgets import TablaBusqueda, crear_boton_hoy, crear_recuadro_destacado
+from .widgets import TablaBusqueda, crear_boton_hoy, crear_recuadro_destacado, redimensionar_pct_pantalla
 
 COLUMNAS = ["Fecha", "Precio de Venta", "Precio de Costo", "Venta Real", "Facturas", "N. Crédito"]
 COL_PVENTA, COL_PCOSTO, COL_VREAL, COL_FACTURAS, COL_NC = 1, 2, 3, 4, 5
@@ -44,9 +44,9 @@ class TotalesDiariosWindow(QMainWindow):
     def __init__(self, parent: QWidget | None = None):
         super().__init__(parent)
         self.setWindowTitle("Totales Diarios")
-        # +10% ancho / +60% alto más (feedback del usuario, 2026-08-18,
-        # tercera ronda).
-        self.resize(1254, 1440)
+        # % de la pantalla real (convención de sistema #11, feedback del
+        # usuario, 2026-08-19) — valor sugerido, a ajustar tras probar.
+        redimensionar_pct_pantalla(self, 90, 90)
 
         self.db = get_session()
         self.repos = RepositoryFactory(self.db)

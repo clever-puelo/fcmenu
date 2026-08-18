@@ -33,7 +33,14 @@ from migration.repository import ETIQUETAS_TIPO_CTASCTE, RepositoryFactory
 from migration.services import ArregloCtaCteService
 
 from .cliente_busqueda_window import ClienteBusquedaWindow
-from .widgets import EnterAsTabFilter, EnteroLineEdit, MontoLineEdit, UpperCaseLineEdit, crear_boton_hoy
+from .widgets import (
+    EnterAsTabFilter,
+    EnteroLineEdit,
+    MontoLineEdit,
+    UpperCaseLineEdit,
+    crear_boton_hoy,
+    redimensionar_pct_pantalla,
+)
 
 # Tipo Cpbte 0-6, réplica de CargaCC.frx (Combo1) — mismas etiquetas ya
 # usadas en toda la app para Ctascte.TIPO.
@@ -48,9 +55,9 @@ class ArregloCtaCteWindow(QMainWindow):
     def __init__(self, parent: QWidget | None = None):
         super().__init__(parent)
         self.setWindowTitle("Arreglos — Cuenta Corriente")
-        # +50% ancho más (feedback del usuario, 2026-08-18, tercera
-        # ronda — repitió el mismo pedido).
-        self.resize(1170, 480)
+        # % de la pantalla real (convención de sistema #11, feedback del
+        # usuario, 2026-08-19) — valor sugerido, a ajustar tras probar.
+        redimensionar_pct_pantalla(self, 60, 55)
 
         self.db = get_session()
         self.repos = RepositoryFactory(self.db)

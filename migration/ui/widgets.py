@@ -54,6 +54,14 @@ todo el sistema, salvo aclaración específica:
     posibilidad de cancelar, en vez de bloquear la UI en silencio
     (confirmado por el usuario, 2026-08-18) — ver
     `procesando_dialog.ejecutar_con_progreso()`.
+11. El tamaño de cada ventana se define como **% de la pantalla real**,
+    no en píxeles fijos (feedback del usuario, 2026-08-19: "Tenemos una
+    diferencia con las medidas. Siguen siendo chicas... En % [de la
+    ventana anterior] evidentemente no sirve") — un `resize(ancho_px,
+    alto_px)` fijo no tiene relación con el monitor real de cada
+    máquina, y sumar "+30% más" ronda tras ronda sobre una base
+    arbitraria nunca convergía a lo que el usuario veía en pantalla.
+    Ver `redimensionar_pct_pantalla()` más abajo.
 """
 
 from __future__ import annotations
@@ -63,7 +71,7 @@ from decimal import Decimal, InvalidOperation
 from typing import Any, Optional
 
 from PyQt6.QtCore import QDate, QEvent, QObject, Qt, QTimer
-from PyQt6.QtGui import QKeyEvent
+from PyQt6.QtGui import QGuiApplication, QKeyEvent
 from PyQt6.QtWidgets import (
     QAbstractItemView,
     QComboBox,
@@ -80,6 +88,27 @@ from PyQt6.QtWidgets import (
 )
 
 from .decimals import format_decimal, parse_decimal
+
+
+def redimensionar_pct_pantalla(ventana: QWidget, ancho_pct: float, alto_pct: float) -> None:
+    """Redimensiona `ventana` a un % del área disponible de la pantalla
+    PRINCIPAL real de la máquina donde corre la app (`QGuiApplication.
+    primaryScreen().availableGeometry()` — ya descuenta la barra de
+    tareas de Windows), no un tamaño fijo en píxeles — convención de
+    sistema #11 (ver docstring del módulo). Se recalcula en el momento,
+    así que ya se adapta sola a cualquier monitor/resolución sin que
+    haga falta saber de antemano la resolución real de cada máquina.
+
+    Si no hay pantalla detectable (ej. corriendo un test headless sin
+    `QT_QPA_PLATFORM=offscreen` propiamente inicializado), no hace nada
+    — la ventana se queda con el tamaño que ya tenía."""
+    pantalla = QGuiApplication.primaryScreen()
+    if pantalla is None:
+        return
+    geometria = pantalla.availableGeometry()
+    ancho = round(geometria.width() * ancho_pct / 100)
+    alto = round(geometria.height() * alto_pct / 100)
+    ventana.resize(ancho, alto)
 
 
 def crear_recuadro_destacado(etiqueta: str, texto_valor: str = "$ 0,00") -> tuple[QFrame, QLabel]:

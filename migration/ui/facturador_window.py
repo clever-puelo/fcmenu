@@ -71,7 +71,7 @@ from .decimals import format_decimal
 from .detalle_grid import DetalleGrid
 from .nota_cliente_dialog import NotaClienteDialog
 from .pdf_preview_dialog import PdfPreviewDialog
-from .widgets import crear_recuadro_destacado
+from .widgets import crear_recuadro_destacado, redimensionar_pct_pantalla
 
 # CUIT del emisor — hardcodeado también en el legacy (`ConectaAFIP()`,
 # `WSFE.Cuit = "33703467909"`, empresa "ALESTEL SRL" ya confirmada en la
@@ -94,8 +94,10 @@ class FacturadorWindow(QMainWindow):
     def __init__(self, parent: QWidget | None = None, *, afip: Optional[NumeracionYCAEProvider] = None):
         super().__init__(parent)
         self.setWindowTitle("Facturador")
-        # +20% ancho más (feedback del usuario, 2026-08-18, tercera ronda).
-        self.resize(1380, 700)
+        # % de la pantalla real, no píxeles fijos (convención de sistema
+        # #11, feedback del usuario, 2026-08-19) — valor sugerido, el
+        # usuario va a probar y avisar cuáles ajustar.
+        redimensionar_pct_pantalla(self, 90, 85)
 
         self.db = get_session()
         self.repos = RepositoryFactory(self.db)

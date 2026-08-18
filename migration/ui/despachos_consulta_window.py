@@ -13,7 +13,7 @@ from migration.db import get_session
 from migration.repository import RepositoryFactory
 
 from .lote_detalle_dialog import LoteDetalleDialog
-from .widgets import AlfanumericoLineEdit, TablaBusqueda
+from .widgets import AlfanumericoLineEdit, TablaBusqueda, redimensionar_pct_pantalla
 
 COLUMNAS = ["Nº Despacho", "Fecha Entrada", "Artículos"]
 COL_NRODESP = 0
@@ -25,9 +25,9 @@ class DespachosConsultaWindow(QMainWindow):
     def __init__(self, parent: QWidget | None = None):
         super().__init__(parent)
         self.setWindowTitle("Consulta de Despachos")
-        # +60% alto más (feedback del usuario, 2026-08-18, tercera ronda
-        # — repitió el mismo pedido, confirmó sumarlo de nuevo).
-        self.resize(728, 2397)
+        # % de la pantalla real (convención de sistema #11, feedback del
+        # usuario, 2026-08-19) — valor sugerido, a ajustar tras probar.
+        redimensionar_pct_pantalla(self, 65, 90)
 
         self.db = get_session()
         self.repos = RepositoryFactory(self.db)

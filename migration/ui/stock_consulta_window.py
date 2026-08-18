@@ -33,7 +33,7 @@ from migration.models import Articulo
 from migration.repository import RepositoryFactory
 
 from .movstock_historial_dialog import MovStockHistorialDialog
-from .widgets import TablaBusqueda, UpperCaseLineEdit
+from .widgets import TablaBusqueda, UpperCaseLineEdit, redimensionar_pct_pantalla
 
 COLUMNAS = ["Sección", "Código", "Descripción", "Precio Venta", "Precio Costo", "Stock Actual", "Stock Mínimo"]
 COL_PVTA, COL_PCOS, COL_STOCK, COL_STMIN = 3, 4, 5, 6
@@ -43,10 +43,9 @@ class StockConsultaWindow(QMainWindow):
     def __init__(self, parent: QWidget | None = None):
         super().__init__(parent)
         self.setWindowTitle("Consulta de Stock")
-        # +30% ancho / +60% alto más (feedback del usuario, 2026-08-18,
-        # tercera ronda — repitió el mismo pedido, confirmó sumarlo de
-        # nuevo).
-        self.resize(2114, 2304)
+        # % de la pantalla real (convención de sistema #11, feedback del
+        # usuario, 2026-08-19) — valor sugerido, a ajustar tras probar.
+        redimensionar_pct_pantalla(self, 95, 90)
 
         self.db = get_session()
         self.repos = RepositoryFactory(self.db)

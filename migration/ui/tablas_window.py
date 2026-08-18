@@ -63,7 +63,7 @@ from migration.services import TablaService
 
 from .decimals import parse_decimal
 from .theme import Verde
-from .widgets import EnterAsTabFilter, TablaBusqueda, UpperCaseLineEdit
+from .widgets import EnterAsTabFilter, TablaBusqueda, UpperCaseLineEdit, redimensionar_pct_pantalla
 
 # Límites en píxeles del panel superior "TABLA:" (25% del alto de la
 # ventana) — mismo criterio de piso/techo ya usado en
@@ -106,8 +106,9 @@ class TablasWindow(QMainWindow):
     def __init__(self, parent: QWidget | None = None):
         super().__init__(parent)
         self.setWindowTitle("ABM de Tablas")
-        # +20% ancho (feedback del usuario, 2026-08-18, segunda ronda).
-        self.resize(1056, 560)
+        # % de la pantalla real (convención de sistema #11, feedback del
+        # usuario, 2026-08-19) — valor sugerido, a ajustar tras probar.
+        redimensionar_pct_pantalla(self, 70, 65)
 
         self.db = get_session()
         self.repos = RepositoryFactory(self.db)

@@ -48,7 +48,7 @@ from migration.db import get_session
 from migration.repository import RepositoryFactory
 
 from .decimals import parse_decimal
-from .widgets import EnterAsTabFilter, UpperCaseLineEdit
+from .widgets import EnterAsTabFilter, UpperCaseLineEdit, redimensionar_pct_pantalla
 
 
 class ParametrosWindow(QMainWindow):
@@ -57,10 +57,9 @@ class ParametrosWindow(QMainWindow):
     def __init__(self, parent: QWidget | None = None):
         super().__init__(parent)
         self.setWindowTitle("Parámetros")
-        # 3 números por línea en vez de 1 sola columna apilada (feedback
-        # del usuario, 2026-08-18, segunda ronda: "para reducir el largo
-        # de la ventana") — bastante menos alto hace falta ahora.
-        self.resize(640, 320)
+        # % de la pantalla real (convención de sistema #11, feedback del
+        # usuario, 2026-08-19) — valor sugerido, a ajustar tras probar.
+        redimensionar_pct_pantalla(self, 50, 40)
 
         self.db = get_session()
         self.repos = RepositoryFactory(self.db)

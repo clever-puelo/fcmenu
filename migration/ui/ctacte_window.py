@@ -63,6 +63,7 @@ from .cliente_busqueda_window import ClienteBusquedaWindow
 from .factura_detalle_dialog import FacturaDetalleDialog
 from .nota_cliente_dialog import NotaClienteDialog
 from .saldos_clientes_dialog import SaldosClientesDialog
+from .widgets import redimensionar_pct_pantalla
 
 ANIO_MINIMO = 2005  # CtaCte.frm Sub CargaAnos: "Ano1 = 2005"
 
@@ -94,9 +95,9 @@ class CtaCteWindow(QMainWindow):
     def __init__(self, parent: QWidget | None = None):
         super().__init__(parent)
         self.setWindowTitle("Cuentas Corrientes")
-        # +20% ancho / +20% alto (feedback del usuario, 2026-08-18,
-        # tercera ronda).
-        self.resize(1822, 1348)
+        # % de la pantalla real (convención de sistema #11, feedback del
+        # usuario, 2026-08-19) — valor sugerido, a ajustar tras probar.
+        redimensionar_pct_pantalla(self, 95, 90)
 
         self.db = get_session()
         self.repos = RepositoryFactory(self.db)

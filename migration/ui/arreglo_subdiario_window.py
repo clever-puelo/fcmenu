@@ -35,7 +35,14 @@ from migration.services import ArregloSubdiarioService
 from .cliente_busqueda_window import ClienteBusquedaWindow
 from .cliente_detalle_dialog import CIVA_OPCIONES
 from .facturador_window import FORMAS_PEDIDO
-from .widgets import EnterAsTabFilter, EnteroLineEdit, MontoLineEdit, UpperCaseLineEdit, crear_boton_hoy
+from .widgets import (
+    EnterAsTabFilter,
+    EnteroLineEdit,
+    MontoLineEdit,
+    UpperCaseLineEdit,
+    crear_boton_hoy,
+    redimensionar_pct_pantalla,
+)
 
 # Tipo Cpbte — réplica de CargaFC.frx (Combo1): a diferencia de
 # CargaCC.frm no hay "0-Saldo Anterior" (concepto exclusivo de
@@ -55,13 +62,12 @@ class ArregloSubdiarioWindow(QMainWindow):
     def __init__(self, parent: QWidget | None = None):
         super().__init__(parent)
         self.setWindowTitle("Arreglos — Subdiario Ventas")
-        # Todavía más chica (feedback del usuario, 2026-08-18, tercera
-        # ronda: "se sale del panel central, comprimir datos si es
-        # necesario... comprimir el contenido al mínimo posible") — el
-        # panel "Comprobante" y el de "Cliente" se comprimieron a menos
-        # filas todavía (ver `_armar_cabecera`/`_armar_cliente`) y los
-        # campos se angostaron acorde al tamaño real de sus datos.
-        self.resize(640, 420)
+        # % de la pantalla real (convención de sistema #11, feedback del
+        # usuario, 2026-08-19) — valor sugerido, a ajustar tras probar.
+        # El panel "Comprobante" y el de "Cliente" siguen comprimidos a
+        # menos filas (ver `_armar_cabecera`/`_armar_cliente`) y los
+        # campos angostados acorde al tamaño real de sus datos.
+        redimensionar_pct_pantalla(self, 55, 55)
 
         self.db = get_session()
         self.repos = RepositoryFactory(self.db)

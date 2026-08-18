@@ -36,7 +36,7 @@ from migration.repository import RepositoryFactory
 from migration.services import EstadisticaVentasService
 
 from .factura_renglon import posiciones_activas_seccion
-from .widgets import TablaBusqueda, crear_boton_hoy
+from .widgets import TablaBusqueda, crear_boton_hoy, redimensionar_pct_pantalla
 
 COLUMNAS = ["Fecha", "Comprobante", "Cód.", "Cliente", "Pulg", "Mtr", "MM", "Telas", "Cant.", "P.Venta", "Importe"]
 COL_CODIGO, COL_CLIENTE, COL_PULG, COL_MTR, COL_MM, COL_TELAS, COL_CANT, COL_PVTA, COL_IMPORTE = range(2, 11)
@@ -50,9 +50,9 @@ class VentasSeccionWindow(QMainWindow):
     def __init__(self, parent: QWidget | None = None):
         super().__init__(parent)
         self.setWindowTitle("Ventas de Artículos por Cliente")
-        # +60% alto más (feedback del usuario, 2026-08-18, tercera ronda
-        # — repitió el mismo pedido, confirmó sumarlo de nuevo).
-        self.resize(1050, 1997)
+        # % de la pantalla real (convención de sistema #11, feedback del
+        # usuario, 2026-08-19) — valor sugerido, a ajustar tras probar.
+        redimensionar_pct_pantalla(self, 85, 90)
 
         self.db = get_session()
         self.repos = RepositoryFactory(self.db)

@@ -85,7 +85,7 @@ from .decimals import format_decimal, parse_decimal
 from .nota_cliente_dialog import NotaClienteDialog
 from .pago_dialog import TIPOS_RETENCION, PagoDialog
 from .pdf_preview_dialog import PdfPreviewDialog
-from .widgets import MontoLineEdit
+from .widgets import MontoLineEdit, redimensionar_pct_pantalla
 
 ETIQUETAS_TIPREG = dict(TIPOS_RETENCION)
 
@@ -122,9 +122,9 @@ class ReciboWindow(QMainWindow):
     def __init__(self, parent: QWidget | None = None):
         super().__init__(parent)
         self.setWindowTitle("Recibo")
-        # +10% ancho / -10% alto (feedback del usuario, 2026-08-18,
-        # tercera ronda: "sale del panel central").
-        self.resize(1452, 496)
+        # % de la pantalla real (convención de sistema #11, feedback del
+        # usuario, 2026-08-19) — valor sugerido, a ajustar tras probar.
+        redimensionar_pct_pantalla(self, 85, 55)
 
         self.db = get_session()
         self.repos = RepositoryFactory(self.db)
