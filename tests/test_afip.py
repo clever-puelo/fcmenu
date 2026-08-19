@@ -161,3 +161,75 @@ class TestGenerarQrAfip:
         assert url_1 != url_2
         assert self._decodificar(url_1)["codAut"] == 70000000000001
         assert self._decodificar(url_2)["codAut"] == 70000000000002
+
+
+class TestCondicionIvaReceptor:
+    """`CondicionIVAReceptorId` (RG 5616/2024) — mapeo confirmado
+    probando contra Homologación real (2026-08-19): AFIP rechazó un CAE
+    de prueba sin este campo (`[10246] Campo Condicion Frente al IVA
+    del receptor es obligatorio...`)."""
+
+    def test_mapeo_por_civa(self):
+        from migration.afip import condicion_iva_receptor
+
+        assert condicion_iva_receptor(1) == 1  # Inscripto -> Responsable Inscripto
+        assert condicion_iva_receptor(2) == 1  # Resp.No Insc. (categoría muerta) -> mismo criterio que CIVA=1
+        assert condicion_iva_receptor(3) == 5  # Cons.Final -> Consumidor Final
+        assert condicion_iva_receptor(4) == 4  # Exento -> Sujeto Exento
+        assert condicion_iva_receptor(5) == 6  # Monotributo -> Responsable Monotributo
+
+    def test_sin_civa_no_inventa_default(self):
+        from migration.afip import condicion_iva_receptor
+
+        assert condicion_iva_receptor(None) is None
+
+
+class TestCacheDeTokenWSAA:
+    """Bug real encontrado probando contra Homologación por primera vez
+    (2026-08-19): WSAA rechaza un `loginCms` nuevo mientras el TA
+    anterior siga vigente (`Fault: "El CEE ya posee un TA valido..."`)
+    — ver docstring de `AfipWSFEv1Cliente._archivo_cache_ta()`."""
+
+    def _cliente(self, tmp_path, monkeypatch, archivo=None):
+        from migration.afip import AfipWSFEv1Cliente
+
+        cliente = AfipWSFEv1Cliente(
+            cuit_emisor="20111111112", certificado_path="x.crt", clave_privada_path="x.key"
+        )
+        monkeypatch.setattr(cliente, "_archivo_cache_ta", lambda: archivo or (tmp_path / "ta.json"))
+        return cliente
+
+    def test_token_cacheado_se_reusa_si_todavia_vale(self, tmp_path, monkeypatch):
+        from datetime import datetime, timedelta, timezone
+
+        archivo = tmp_path / "ta.json"
+        original = self._cliente(tmp_path, monkeypatch, archivo)
+        original._token, original._sign = "TOKEN-REAL", "SIGN-REAL"
+        original._token_vence = datetime.now(timezone(timedelta(hours=-3))) + timedelta(hours=10)
+        original._guardar_token_cacheado()
+
+        nuevo_proceso = self._cliente(tmp_path, monkeypatch, archivo)
+        nuevo_proceso._cargar_token_cacheado()
+
+        assert nuevo_proceso._token == "TOKEN-REAL"
+        assert nuevo_proceso._sign == "SIGN-REAL"
+        assert nuevo_proceso._token_vigente() is True
+
+    def test_token_vencido_no_se_reusa(self, tmp_path, monkeypatch):
+        from datetime import datetime, timedelta, timezone
+
+        archivo = tmp_path / "ta.json"
+        original = self._cliente(tmp_path, monkeypatch, archivo)
+        original._token, original._sign = "VIEJO", "VIEJO"
+        original._token_vence = datetime.now(timezone(timedelta(hours=-3))) - timedelta(hours=1)
+        original._guardar_token_cacheado()
+
+        nuevo_proceso = self._cliente(tmp_path, monkeypatch, archivo)
+        nuevo_proceso._cargar_token_cacheado()
+
+        assert nuevo_proceso._token_vigente() is False
+
+    def test_sin_cache_no_rompe(self, tmp_path, monkeypatch):
+        cliente = self._cliente(tmp_path, monkeypatch, tmp_path / "no_existe.json")
+        cliente._cargar_token_cacheado()  # no debe tirar excepción
+        assert cliente._token_vigente() is False

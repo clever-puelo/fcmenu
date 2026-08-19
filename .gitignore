@@ -20,3 +20,9 @@ migration/pdf_output/
 # Config local de Claude Code (modo de permisos, etc.) — preferencia
 # personal de esta máquina, no algo para compartir en el repo.
 .claude/
+
+# Cache local del Ticket de Acceso (TA) de WSAA — AFIP rechaza un login
+# nuevo mientras el TA anterior siga vigente (~12hs), ver
+# AfipWSFEv1Cliente._archivo_cache_ta(). Contiene un token/sign reales
+# de sesión, no una credencial permanente, pero tampoco va al repo.
+.afip_cache/

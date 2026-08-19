@@ -57,6 +57,7 @@ from migration.afip import (
     NumeracionYCAEProvider,
     ResultadoCAE,
     codigo_afip,
+    condicion_iva_receptor,
     generar_qr_afip,
     punto_venta_por_tipo,
 )
@@ -577,6 +578,7 @@ class FacturadorWindow(QMainWindow):
                 importe_iibb=total.percepcion_iibb,
                 importe_total=total.total,
                 fecha_cbte=fecha,
+                condicion_iva_receptor_id=condicion_iva_receptor(self.cliente_actual.CIVA),
             )
         except Exception as exc:  # noqa: BLE001
             QMessageBox.critical(self, "Facturador", f"Error al conectar con AFIP:\n{exc}")

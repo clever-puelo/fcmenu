@@ -62,7 +62,14 @@ from PyQt6.QtWidgets import (
     QWidget,
 )
 
-from migration.afip import AfipWSFEv1Stub, NumeracionYCAEProvider, ResultadoCAE, codigo_afip, punto_venta_por_tipo
+from migration.afip import (
+    AfipWSFEv1Stub,
+    NumeracionYCAEProvider,
+    ResultadoCAE,
+    codigo_afip,
+    condicion_iva_receptor,
+    punto_venta_por_tipo,
+)
 from migration.db import get_session
 from migration.models import Cliente, Ctascte
 from migration.repository import ETIQUETAS_TIPO_CTASCTE, RepositoryFactory
@@ -471,6 +478,7 @@ class NotaCreditoConceptoWindow(QMainWindow):
                 importe_total=total.total,
                 fecha_cbte=fecha,
                 importe_no_gravado=total.no_gravado,
+                condicion_iva_receptor_id=condicion_iva_receptor(self.cliente_actual.CIVA),
             )
         except Exception as exc:  # noqa: BLE001
             QMessageBox.critical(self, "Nota de Crédito/Débito", f"Error al conectar con AFIP:\n{exc}")

@@ -103,6 +103,7 @@ class NumeracionYCAEProvider(ABC):
         importe_total: Decimal,
         fecha_cbte: date,
         importe_no_gravado: Decimal = Decimal("0"),
+        condicion_iva_receptor_id: Optional[int] = None,
     ) -> ResultadoCAE:
         """Réplica de `WSFE.Aut(...)` (`EmiFact.frm:2650-2654`). El
         `Nro_Doc` del receptor siempre viaja como CUIT (`Tipo_Doc=80`,
@@ -119,7 +120,15 @@ class NumeracionYCAEProvider(ABC):
         `"0.00"` SIEMPRE, incluso cuando el operador cargó un importe
         "SIN IVA" real — bug real confirmado y NO replicado (decisión
         del usuario, 2026-08-19): acá se manda tal cual, para que el CAE
-        pedido coincida con el total que el operador realmente cargó."""
+        pedido coincida con el total que el operador realmente cargó.
+
+        `condicion_iva_receptor_id`: `CondicionIVAReceptorId` real de
+        WSFEv1 (RG 5616/2024, ver `condicion_iva_receptor()`) —
+        confirmado OBLIGATORIO probando contra Homologación real
+        (2026-08-19), AFIP rechaza el CAE sin este campo con el error
+        `[10246] Campo Condicion Frente al IVA del receptor es
+        obligatorio...`. El llamador lo arma con `condicion_iva_
+        receptor(cliente.CIVA)` — este método no inventa un default."""
 
 
 class AfipWSFEv1Stub(NumeracionYCAEProvider):
@@ -148,6 +157,7 @@ class AfipWSFEv1Stub(NumeracionYCAEProvider):
         importe_total: Decimal,
         fecha_cbte: date,
         importe_no_gravado: Decimal = Decimal("0"),
+        condicion_iva_receptor_id: Optional[int] = None,
     ) -> ResultadoCAE:
         if not cuit_receptor or not cuit_receptor.strip():
             raise ValueError("No se puede solicitar CAE sin CUIT del receptor.")
@@ -219,6 +229,30 @@ def etiqueta_entorno_afip(entorno: str | None = None) -> str:
 # FacturaService.alicuota_iva_inscripto — Parametro.IVAINS real es 21).
 ALICUOTA_IVA_21_ID = 5
 
+# CondicionIVAReceptorId (FECAEDetRequest, RG 5616/2024) — mapeo real
+# confirmado probando contra Homologación por primera vez (2026-08-19):
+# el campo resultó OBLIGATORIO en la práctica (`[10246] Campo Condicion
+# Frente al IVA del receptor es obligatorio...`, WSFEv1 real), pese a
+# ser opcional a nivel XSD — el TODO que tenía `AfipWSFEv1Cliente` desde
+# antes de tener credenciales reales queda resuelto. Mapeo contra
+# `Cliente.CIVA` (`CIVA_OPCIONES` en `cliente_detalle_dialog.py`) por
+# nombre de categoría real de AFIP (`FEParamGetCondicionIvaReceptor`):
+# 1=Responsable Inscripto, 4=Sujeto Exento, 5=Consumidor Final,
+# 6=Responsable Monotributo. `CIVA=2` ("Resp.No Insc.", categoría
+# eliminada por AFIP en 2003, sin equivalente real) mapea igual que
+# CIVA=1 — mismo criterio que ya usa `FacturaService.CIVA_GRAVADO_MAX`
+# (trata 1 y 2 como igualmente gravados).
+CONDICION_IVA_RECEPTOR_POR_CIVA = {1: 1, 2: 1, 3: 5, 4: 4, 5: 6}
+
+
+def condicion_iva_receptor(civa_cliente: Optional[int]) -> Optional[int]:
+    """`CondicionIVAReceptorId` real de WSFEv1 para el `Cliente.CIVA`
+    dado, o `None` si no hay `CIVA` cargado (el llamador decide qué
+    hacer — no hay un default seguro para inventar)."""
+    if civa_cliente is None:
+        return None
+    return CONDICION_IVA_RECEPTOR_POR_CIVA.get(civa_cliente)
+
 # Margen de seguridad para renovar el token antes de que venza (AFIP lo
 # emite válido por 12hs — WSAA.CreateTRA original del legacy, comentario
 # "se puede usar el mismo token y sign por 6 horas").
@@ -278,6 +312,52 @@ class AfipWSFEv1Cliente(NumeracionYCAEProvider):
         if self._token is None or self._sign is None or self._token_vence is None:
             return False
         return datetime.now(_TZ_ARGENTINA) < (self._token_vence - _MARGEN_RENOVACION_TOKEN)
+
+    # **Bug real encontrado probando contra Homologación de verdad
+    # (2026-08-19)**: WSAA rechaza un `loginCms` nuevo mientras el TA
+    # (Ticket de Acceso) anterior siga vigente — `Fault: "El CEE ya
+    # posee un TA valido para el acceso al WSN solicitado"` — AFIP no
+    # tiene forma de "cerrar sesión" antes de tiempo, hay que reusar el
+    # MISMO token/sign hasta que venza (~12hs). Mientras `self._token`
+    # viva en memoria (una sola instancia, toda la vida de la ventana)
+    # esto nunca se manifiesta — pero cada reinicio de la app, o cada
+    # script/proceso nuevo (como se probó acá), perdía el token en
+    # memoria y disparaba un login nuevo que AFIP rechazaba. Se cachea
+    # en disco (por CUIT+entorno) para sobrevivir a reinicios.
+    def _archivo_cache_ta(self) -> Path:
+        from pathlib import Path
+
+        directorio = Path(__file__).resolve().parent.parent / ".afip_cache"
+        directorio.mkdir(exist_ok=True)
+        entorno = "homo" if self.homologacion else "prod"
+        return directorio / f"ta_{self.cuit_emisor}_{entorno}.json"
+
+    def _cargar_token_cacheado(self) -> None:
+        import json
+
+        archivo = self._archivo_cache_ta()
+        if not archivo.exists():
+            return
+        try:
+            datos = json.loads(archivo.read_text(encoding="utf-8"))
+            vence = datetime.fromisoformat(datos["vence"])
+            if datetime.now(_TZ_ARGENTINA) < (vence - _MARGEN_RENOVACION_TOKEN):
+                self._token = datos["token"]
+                self._sign = datos["sign"]
+                self._token_vence = vence
+        except Exception:  # noqa: BLE001 — cache corrupto/ajeno, se ignora y se pide un TA nuevo
+            pass
+
+    def _guardar_token_cacheado(self) -> None:
+        import json
+
+        try:
+            self._archivo_cache_ta().write_text(
+                json.dumps({"token": self._token, "sign": self._sign, "vence": self._token_vence.isoformat()}),
+                encoding="utf-8",
+            )
+        except OSError:
+            pass  # no bloquea el flujo real si el disco no es escribible
 
     def _generar_tra(self) -> bytes:
         ahora = datetime.now(_TZ_ARGENTINA)
@@ -349,6 +429,7 @@ class AfipWSFEv1Cliente(NumeracionYCAEProvider):
 
         self._token, self._sign = token, sign
         self._token_vence = datetime.fromisoformat(expiration_time) if expiration_time else None
+        self._guardar_token_cacheado()
 
     # ------------------------------------------------------------------
     # WSFEv1 — numeración y CAE
@@ -356,6 +437,8 @@ class AfipWSFEv1Cliente(NumeracionYCAEProvider):
     def _cliente_wsfe(self):
         from zeep import Client
 
+        if not self._token_vigente():
+            self._cargar_token_cacheado()
         if not self._token_vigente():
             self._autenticar()
         if self._wsfe_client is None:
