@@ -503,7 +503,15 @@ class AfipWSFEv1Cliente(NumeracionYCAEProvider):
         fecha_txt = fecha_cbte.strftime("%Y%m%d")
 
         detalle = {
-            "Concepto": 1,  # Productos
+            # Concepto=1 (Productos) — único valor en alcance hoy (sin
+            # Servicios/2 ni Productos y Servicios/3). Bug real
+            # encontrado probando contra Homologación real (2026-08-19):
+            # antes se mandaba también `FchVtoPago` sin importar el
+            # Concepto — AFIP lo rechaza con `[10049] FchVtoPago Debe
+            # informarse solo si Concepto es igual a 2 o 3.` Sacado del
+            # todo mientras Concepto sea 1; si en el futuro se agrega
+            # Concepto 2/3, hay que volver a mandarlo condicionalmente.
+            "Concepto": 1,
             "DocTipo": TIPO_DOC_CUIT,
             "DocNro": int(cuit_receptor.replace("-", "")),
             "CbteDesde": cbte_nro,
@@ -518,7 +526,6 @@ class AfipWSFEv1Cliente(NumeracionYCAEProvider):
             "ImpOpEx": 0.00,
             "ImpTrib": float(importe_iibb),
             "ImpIVA": float(importe_iva),
-            "FchVtoPago": fecha_txt,
             "MonId": "PES",
             "MonCotiz": 1,
         }
