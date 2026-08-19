@@ -63,11 +63,11 @@ from PyQt6.QtWidgets import (
 )
 
 from migration.afip import (
-    AfipWSFEv1Stub,
     NumeracionYCAEProvider,
     ResultadoCAE,
     codigo_afip,
     condicion_iva_receptor,
+    crear_afip_provider,
     punto_venta_por_tipo,
 )
 from migration.db import get_session
@@ -122,7 +122,7 @@ class NotaCreditoConceptoWindow(QMainWindow):
         self.nc_service = NotaCreditoConceptoService(self.db)
         self.emision_service = EmisionNotaCreditoService(self.db)
         self.cuenta_corriente_service = CuentaCorrienteService(self.db)
-        self.afip: NumeracionYCAEProvider = afip if afip is not None else AfipWSFEv1Stub()
+        self.afip: NumeracionYCAEProvider = afip if afip is not None else crear_afip_provider()
 
         self.cliente_actual: Optional[Cliente] = None
         self.tiene_nota_cliente = False

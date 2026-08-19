@@ -163,6 +163,52 @@ class TestGenerarQrAfip:
         assert self._decodificar(url_2)["codAut"] == 70000000000002
 
 
+class TestCrearAfipProvider:
+    """`crear_afip_provider()` — fábrica única usada por las 3 ventanas
+    reales (Facturador, NC Concepto, NC Mercadería) en vez de construir
+    `AfipWSFEv1Stub()`/`AfipWSFEv1Cliente()` a mano."""
+
+    def test_default_sin_variables_es_stub(self, monkeypatch):
+        from migration.afip import AfipWSFEv1Stub, crear_afip_provider
+
+        monkeypatch.delenv("FCMENU_AFIP_ENTORNO", raising=False)
+        proveedor = crear_afip_provider()
+        assert isinstance(proveedor, AfipWSFEv1Stub)
+
+    def test_homologacion_sin_configurar_rechaza(self, monkeypatch):
+        from migration.afip import crear_afip_provider
+
+        monkeypatch.setenv("FCMENU_AFIP_ENTORNO", "HOMOLOGACION")
+        monkeypatch.delenv("FCMENU_AFIP_CUIT", raising=False)
+        monkeypatch.delenv("FCMENU_AFIP_CERT_PATH", raising=False)
+        monkeypatch.delenv("FCMENU_AFIP_KEY_PATH", raising=False)
+        with pytest.raises(RuntimeError, match="FCMENU_AFIP_CUIT"):
+            crear_afip_provider()
+
+    def test_homologacion_configurada_arma_cliente_real(self, monkeypatch):
+        from migration.afip import AfipWSFEv1Cliente, crear_afip_provider
+
+        monkeypatch.setenv("FCMENU_AFIP_ENTORNO", "HOMOLOGACION")
+        monkeypatch.setenv("FCMENU_AFIP_CUIT", "33703467909")
+        monkeypatch.setenv("FCMENU_AFIP_CERT_PATH", "Homo.crt")
+        monkeypatch.setenv("FCMENU_AFIP_KEY_PATH", "Homo.key")
+        proveedor = crear_afip_provider()
+        assert isinstance(proveedor, AfipWSFEv1Cliente)
+        assert proveedor.cuit_emisor == "33703467909"
+        assert proveedor.homologacion is True
+
+    def test_produccion_configurada_no_usa_wsdl_de_homologacion(self, monkeypatch):
+        from migration.afip import AfipWSFEv1Cliente, crear_afip_provider
+
+        monkeypatch.setenv("FCMENU_AFIP_ENTORNO", "PRODUCCION")
+        monkeypatch.setenv("FCMENU_AFIP_CUIT", "33703467909")
+        monkeypatch.setenv("FCMENU_AFIP_CERT_PATH", "prod.crt")
+        monkeypatch.setenv("FCMENU_AFIP_KEY_PATH", "prod.key")
+        proveedor = crear_afip_provider()
+        assert isinstance(proveedor, AfipWSFEv1Cliente)
+        assert proveedor.homologacion is False
+
+
 class TestCondicionIvaReceptor:
     """`CondicionIVAReceptorId` (RG 5616/2024) — mapeo confirmado
     probando contra Homologación real (2026-08-19): AFIP rechazó un CAE

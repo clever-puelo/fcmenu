@@ -588,6 +588,53 @@ def punto_venta_por_tipo(tipo_fac: int) -> int:
     return PUNTO_VENTA_FACTURA if tipo_fac == 1 else PUNTO_VENTA_NC_ND
 
 
+def crear_afip_provider() -> NumeracionYCAEProvider:
+    """Fábrica única del proveedor real de numeración/CAE — reemplaza
+    construir `AfipWSFEv1Stub()`/`AfipWSFEv1Cliente()` a mano en cada
+    ventana (`FacturadorWindow`, `NotaCreditoConceptoWindow`,
+    `NotaCreditoMercaderiaWindow`). Decide según `FCMENU_AFIP_ENTORNO`
+    (ver `entorno_afip()`, `.env.example`):
+
+    - `STUB` (default si no está seteada): `AfipWSFEv1Stub()`, sin
+      conexión ninguna a AFIP — comportamiento de siempre, cero riesgo,
+      no hace falta ninguna otra variable configurada.
+    - `HOMOLOGACION`/`PRODUCCION`: `AfipWSFEv1Cliente` real, leyendo
+      `FCMENU_AFIP_CUIT`/`FCMENU_AFIP_CERT_PATH`/`FCMENU_AFIP_KEY_PATH`
+      del entorno. Si falta alguna, **tira `RuntimeError` en vez de
+      arrancar en modo simulado a escondidas** — con
+      `FCMENU_AFIP_ENTORNO=HOMOLOGACION` seteada, el cartel de
+      `MainMenuWindow` ya le dice al operador "Homologación / Prueba"
+      (`etiqueta_entorno_afip()`, que no distingue STUB de HOMOLOGACION
+      a propósito) — si de verdad no hay conexión real por una variable
+      faltante, mejor un error fuerte al abrir la pantalla que un CAE
+      falso silencioso que el operador cree real.
+    """
+    import os
+
+    entorno = entorno_afip()
+    if entorno == "STUB":
+        return AfipWSFEv1Stub()
+
+    cuit = os.environ.get("FCMENU_AFIP_CUIT", "").strip()
+    cert = os.environ.get("FCMENU_AFIP_CERT_PATH", "").strip()
+    clave = os.environ.get("FCMENU_AFIP_KEY_PATH", "").strip()
+    faltantes = [
+        nombre
+        for nombre, valor in (
+            ("FCMENU_AFIP_CUIT", cuit), ("FCMENU_AFIP_CERT_PATH", cert), ("FCMENU_AFIP_KEY_PATH", clave),
+        )
+        if not valor
+    ]
+    if faltantes:
+        raise RuntimeError(
+            f"FCMENU_AFIP_ENTORNO={entorno} pero falta configurar: {', '.join(faltantes)} "
+            "(ver .env.example) — no se arranca en modo simulado sin avisar."
+        )
+    return AfipWSFEv1Cliente(
+        cuit_emisor=cuit, certificado_path=cert, clave_privada_path=clave, homologacion=(entorno == "HOMOLOGACION")
+    )
+
+
 def generar_qr_afip(
     cuit_emisor: str,
     punto_venta: int,
