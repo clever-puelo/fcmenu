@@ -898,6 +898,19 @@ class FcivaVtaRepository(BaseRepository[FcivaVta]):
         """Retorna facturas de un cliente."""
         return self.db.query(FcivaVta).filter(FcivaVta.CLTE == clte).all()
 
+    def facturas_de_cliente(self, clte: int) -> List[FcivaVta]:
+        """Sólo Facturas (`TIPO='1'`) de un cliente, más recientes
+        primero — para elegir la Factura "original" a devolver en la
+        Nota de Crédito por Devolución de Mercadería (`Motivo=1`,
+        `NotaCreditoMercaderiaWindow`). A diferencia de `by_cliente()`
+        no trae NC/ND/Cotizaciones ya emitidas contra este cliente."""
+        return (
+            self.db.query(FcivaVta)
+            .filter((FcivaVta.CLTE == clte) & (FcivaVta.TIPO == "1"))
+            .order_by(FcivaVta.FECHA.desc(), FcivaVta.CPBTE.desc())
+            .all()
+        )
+
     def by_fecha_rango(self, fecha_desde, fecha_hasta) -> List[FcivaVta]:
         """Retorna facturas en un rango de fechas."""
         return (

@@ -41,6 +41,7 @@ from migration.services import (
     ConceptoNotaCredito,
     CuentaCorrienteService,
     EmisionFacturaService,
+    EmisionNotaCreditoMercaderiaService,
     EmisionNotaCreditoService,
     EmisionReciboService,
     EstadisticaVentasService,
@@ -1645,6 +1646,111 @@ class TestEmisionNotaCreditoService:
             EmisionNotaCreditoService(db).emitir_concepto(
                 cliente=cliente, tipo=3, letra="C", punto_venta=4, numero_comprobante=1,
                 conceptos=conceptos, total=total, motivo=1, usuario="ana",
+            )
+
+
+# ---------------------------------------------------------------------------
+# EmisionNotaCreditoMercaderiaService
+# ---------------------------------------------------------------------------
+
+
+class TestEmisionNotaCreditoMercaderiaService:
+    """Réplica de `EmiFact.frm Sub Graba()` (rama `ConArticulos:`,
+    Motivo=1/"DEV.MERC.") — reversa de Stock, no descuento (ver
+    docstring de `EmisionNotaCreditoMercaderiaService`)."""
+
+    def _cliente(self, db, civa=1, cvta=1, deuda="1000", corr1=0):
+        cliente = Cliente(
+            CODIGO=400, NOMB="Cliente Devolución", PCIA="B", CVTA=cvta, CIVA=civa,
+            CUIT="20111111119", VEND=5, DEUDA=Decimal(deuda), CORR1=corr1,
+        )
+        db.add(cliente)
+        db.add(Fctabla1(CTAB="CV   ", COD=str(cvta).ljust(5), DESCRI="CONTADO", NUMSD3=15))
+        db.commit()
+        return cliente
+
+    def _factura_con_deuda(self, db, clte=400, cpbte=10, debe="1000"):
+        factura = Ctascte(
+            CLTE=clte, FECHA=date(2026, 1, 1), TIPO=1, PREFIJO=3, CPBTE=cpbte, LETRA="A",
+            IMPUT1="0 ", IMPUT2="0 ", IMPUT3="0 ", IMPUT4="0 ", IMPUT5="0 ", IMPUT6="0 ",
+            IMPTE=Decimal(debe), DEBE=Decimal(debe), FECVTO=date(2026, 1, 15),
+        )
+        db.add(factura)
+        db.commit()
+        return factura
+
+    def test_devolucion_reversa_stock_e_imputa_contra_factura(self, db):
+        _set_parametro(db)
+        cliente = self._cliente(db, deuda="1000")
+        factura = self._factura_con_deuda(db, debe="1000")
+        db.add(Stock(COD1="AA", COD2="1", STUNID=Decimal("40")))
+        db.commit()
+
+        renglon = RenglonEmision(
+            cod1="AA", cod2="1", descripcion="ARTICULO PRUEBA", precio_unitario=Decimal("100"),
+            importe=Decimal("500"), cantidad_unidades=Decimal("5"),  # precio/cantidad REALES de la Factura original
+        )
+        total = FacturaService(db).calcular_total(bruto=renglon.importe, descuento=Decimal("0"), civa_cliente=cliente.CIVA)
+
+        resultado = EmisionNotaCreditoMercaderiaService(db).emitir(
+            cliente=cliente, letra="A", punto_venta=4, numero_comprobante=60,
+            renglones=[renglon], total=total, motivo=1, usuario="ana",
+            comprobante_a_imputar=factura, fecha=date(2026, 1, 20),
+        )
+
+        # Reversa de Stock: SUMA, no resta (EmiFact.frm:1864-1867, Else).
+        stock = db.query(Stock).filter(Stock.COD1 == "AA", Stock.COD2 == "1").one()
+        assert stock.STUNID == Decimal("45")  # 40 + 5
+
+        mov = db.query(MovStock).filter(MovStock.CPBTE == 60).one()
+        assert mov.TIPO == "11"  # N/Créd.'A' (EmiFact.frm:1915-1924)
+
+        fcestad = db.query(Fcestad1).filter(Fcestad1.CPBTE == 60).one()
+        assert fcestad.TIPO == 2
+        assert fcestad.IMPTE == Decimal("500")  # precio real de la Factura original, no de catálogo
+
+        # DEUDA del cliente y DEBE de la Factura original, igual mecanismo
+        # que EmisionNotaCreditoService (ImputaFact()).
+        cliente_db = db.query(Cliente).filter(Cliente.CODIGO == 400).one()
+        assert cliente_db.DEUDA == Decimal("1000") - total.total
+
+        factura_db = db.query(Ctascte).filter(Ctascte.id == factura.id).one()
+        assert factura_db.DEBE == Decimal("1000") - total.total
+
+        imputacion = db.query(Imputacion).filter(Imputacion.id == resultado.imputacion_id).one()
+        assert imputacion.TIPO == "2"
+
+        totales = db.query(Totales).filter(Totales.FECHA == date(2026, 1, 20)).one()
+        assert totales.NCA == 1
+        assert totales.UNIDA == -5  # Graba() Case 2: RESTA (devolución baja el total facturado)
+
+    def test_sin_renglones_rechaza(self, db):
+        _set_parametro(db)
+        cliente = self._cliente(db)
+        factura = self._factura_con_deuda(db)
+        total = FacturaService(db).calcular_total(Decimal("0"), Decimal("0"), cliente.CIVA)
+
+        with pytest.raises(ValueError):
+            EmisionNotaCreditoMercaderiaService(db).emitir(
+                cliente=cliente, letra="A", punto_venta=4, numero_comprobante=1,
+                renglones=[], total=total, motivo=1, usuario="ana",
+                comprobante_a_imputar=factura,
+            )
+
+    def test_sin_comprobante_a_imputar_rechaza(self, db):
+        _set_parametro(db)
+        cliente = self._cliente(db)
+        renglon = RenglonEmision(
+            cod1="AA", cod2="1", descripcion="X", precio_unitario=Decimal("10"),
+            importe=Decimal("10"), cantidad_unidades=Decimal("1"),
+        )
+        total = FacturaService(db).calcular_total(Decimal("10"), Decimal("0"), cliente.CIVA)
+
+        with pytest.raises(ValueError):
+            EmisionNotaCreditoMercaderiaService(db).emitir(
+                cliente=cliente, letra="A", punto_venta=4, numero_comprobante=1,
+                renglones=[renglon], total=total, motivo=1, usuario="ana",
+                comprobante_a_imputar=None,
             )
 
 

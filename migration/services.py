@@ -1895,6 +1895,269 @@ class EmisionNotaCreditoService:
 
 
 # ---------------------------------------------------------------------------
+# EmisionNotaCreditoMercaderiaService — Nota de Crédito por Devolución de
+# Mercadería (Motivo=1/"DEV.MERC.")
+# ---------------------------------------------------------------------------
+
+
+class EmisionNotaCreditoMercaderiaService:
+    """Persistencia atómica de una Nota de Crédito por Devolución de
+    Mercadería (Motivo=1/"DEV.MERC.") — reusa la MISMA grilla/cálculo de
+    Factura (`FacturaService.calcular_total()`, `RenglonEmision`) que el
+    legacy reutiliza literalmente (`CabFact.frm Sub Combo5_Click`:
+    `Motivo=1` muestra `DetFact.Show`, la grilla de artículos, en vez de
+    `DetNC.Show`), pero graba TIPO=2 y REVERSA Stock en vez de
+    descontarlo.
+
+    Réplica de `EmiFact.frm Sub Graba()` (rama común TipoFac 2/3, ver
+    `EmisionNotaCreditoService` para la parte compartida con "Concepto
+    Libre") + el bloque de artículos (`ConArticulos:`, líneas 983-1076)
+    + reversa de Stock (líneas 1864-1928, rama `Else` de `If TipoFac = 1
+    Then ... Else STUnid = STUnid + cantidad ...`, con códigos `MovStock`
+    dedicados `11`/`12` = N/Créd.'A'/'B') + `Sub ImputaFact()` (líneas
+    2351-2437, mismo mecanismo de slots IMPUT1-6 ya usado por Recibo y
+    por `EmisionNotaCreditoService`).
+
+    **Precio de cada renglón = el precio REAL de la Factura original**
+    (`Fcestad1.PVTA`/`.IMPTE` de ese renglón puntual), no el precio de
+    catálogo actual — decisión del usuario (2026-08-19), mejora
+    deliberada sobre el legacy (que reutilizaba la grilla en blanco,
+    forzando a re-tipear el artículo a precio de catálogo). El llamador
+    arma los `RenglonEmision` desde `Fcestad1Repository.by_comprobante()`
+    de la Factura elegida — este servicio no vuelve a calcular precio ni
+    bonificación, usa el importe ya neto tal cual viene.
+
+    **Límite conocido, heredado del propio esquema, no de esta
+    migración**: `Fcestad1` no guarda el lote/Despacho de cada renglón
+    vendido (a diferencia de `RenglonEmision.nrodesp_elegido`, que sólo
+    existe en memoria durante la Factura original) — la reversa de
+    Stock ajusta el agregado (`Stock.STUnid`) pero NO un `Despacho`
+    puntual. Misma limitación que ya tiene hoy la consulta de detalle de
+    Factura Emitida."""
+
+    TIPO_NC = 2
+    LETRAS_SOPORTADAS = ("A", "B")
+    # N/Créd.'A' / N/Créd.'B' — EmiFact.frm:1915-1924. Letra "C" (17)
+    # queda fuera, mismo alcance que el resto del sistema.
+    CODMOVS_POR_LETRA = {"A": "11", "B": "12"}
+
+    def __init__(self, db: Session):
+        self.db = db
+        self.repos = RepositoryFactory(db)
+        self.cuentas = CuentaCorrienteService(db)
+
+    def emitir(
+        self,
+        cliente: Cliente,
+        letra: str,
+        punto_venta: int,
+        numero_comprobante: int,
+        renglones: list[RenglonEmision],
+        total: "TotalFactura",
+        motivo: int,
+        usuario: str,
+        comprobante_a_imputar: Ctascte,
+        fecha: Optional[date] = None,
+    ) -> ResultadoEmisionNotaCredito:
+        if letra not in self.LETRAS_SOPORTADAS:
+            raise ValueError(f"Letra '{letra}' no soportada — el alcance actual es sólo Factura A/B.")
+        if not renglones:
+            raise ValueError("La Nota de Crédito no tiene renglones para devolver.")
+        if comprobante_a_imputar is None:
+            raise ValueError("La Nota de Crédito necesita un comprobante contra el cual imputarse.")
+
+        fecha = fecha or date.today()
+        ahora = datetime.now()
+        usuario6 = (usuario or "")[:6]
+        codmovs = self.CODMOVS_POR_LETRA[letra]
+
+        try:
+            total_cantidad_unidades = Decimal("0")
+            for item, renglon in enumerate(renglones, start=1):
+                self._grabar_renglon(renglon, item, codmovs, punto_venta, numero_comprobante, cliente, letra, fecha, ahora, usuario6)
+                total_cantidad_unidades += renglon.cantidad_unidades
+
+            fcivavta = FcivaVta(
+                FECHA=fecha,
+                PTOVTA=punto_venta,
+                CPBTE=numero_comprobante,
+                LETRA=letra,
+                TIPO=str(self.TIPO_NC),
+                CLTE=cliente.CODIGO,
+                NOMB=cliente.NOMB,
+                PCIA=cliente.PCIA,
+                CVTA=str(cliente.CVTA) if cliente.CVTA is not None else None,
+                MOTI=str(motivo),
+                CIVA=str(cliente.CIVA) if cliente.CIVA is not None else None,
+                CUIT=(cliente.CUIT or "")[:14],
+                VEND=cliente.VEND,
+                ZONA=0,
+                TOTCAN=int(total_cantidad_unidades),
+                GRINS=total.neto_gravado,
+                GRNOINS=Decimal("0"),
+                IVAINS=total.iva,
+                IVANOINS=Decimal("0"),
+                PORCIB=Decimal("0"),
+                TOTIB=Decimal("0"),
+                EXENTO=Decimal("0"),
+                TOTCOS=Decimal("0"),
+                ITEMS=len(renglones),
+                BON=total.descuento,
+                NOIMPR="0",
+                COMIS=Decimal("0"),
+            )
+            self.db.add(fcivavta)
+
+            dias_vto = _dias_vencimiento_cond_venta(self.repos, cliente.CVTA)
+            corr = self.repos.cliente().proximo_correlativo(cliente)
+            ctascte = Ctascte(
+                CLTE=cliente.CODIGO,
+                FECHA=fecha,
+                TIPO=self.TIPO_NC,
+                PREFIJO=punto_venta,
+                CPBTE=numero_comprobante,
+                LETRA=letra,
+                IMPUT1="0 ", IMPUT2="0 ", IMPUT3="0 ", IMPUT4="0 ", IMPUT5="0 ", IMPUT6="0 ",
+                IMPTE=total.total,
+                DEBE=total.total,
+                CVTA=str(cliente.CVTA) if cliente.CVTA is not None else None,
+                BON=total.descuento,
+                TIPO9="0",
+                MOTI=str(motivo),
+                FECVTO=fecha + timedelta(days=dias_vto),
+                USUAR=usuario6,
+            )
+            self.db.add(ctascte)
+
+            # Réplica de Graba() línea 2314 (`RgCCTE!imput1 = Corr`) — la
+            # propia fila recién creada se marca a sí misma con su
+            # correlativo, mismo patrón ya usado en `EmisionReciboService`/
+            # `EmisionNotaCreditoService`.
+            ctascte.IMPUT1 = str(corr)
+            cliente.DEUDA = (cliente.DEUDA or Decimal("0")) - total.total
+            cliente.USUARIO = usuario6
+            cliente.FACTUAL = fecha
+
+            resultado_imputacion = self.cuentas.imputar_pago(
+                comprobante=comprobante_a_imputar,
+                importe_aplicado=total.total,
+                corr=corr,
+                cpbte_recibo=numero_comprobante,
+                usuario=usuario6,
+                clte=cliente.CODIGO,
+                fecha=fecha,
+                commit=False,
+                tipo_imputacion=CuentaCorrienteService.TIPO_IMPUTACION_NOTA_CREDITO,
+            )
+
+            totales = self._upsert_totales(fecha, letra, total, total_cantidad_unidades, usuario6)
+
+            self.db.commit()
+        except Exception:
+            self.db.rollback()
+            raise
+
+        self.db.refresh(fcivavta)
+        self.db.refresh(ctascte)
+        self.db.refresh(totales)
+        return ResultadoEmisionNotaCredito(
+            fcivavta_id=fcivavta.id, ctascte_id=ctascte.id, totales_id=totales.id,
+            imputacion_id=resultado_imputacion.imputacion_id, total=total.total,
+        )
+
+    def _grabar_renglon(
+        self,
+        renglon: RenglonEmision,
+        item: int,
+        codmovs: str,
+        punto_venta: int,
+        numero_comprobante: int,
+        cliente: Cliente,
+        letra: str,
+        fecha: date,
+        ahora: datetime,
+        usuario6: str,
+    ) -> None:
+        cod1, cod2 = renglon.cod1, renglon.cod2
+
+        # --- Stock (upsert, REVERSADO respecto de Factura) --------------
+        stock = self.repos.stock().by_cod1_cod2(cod1, cod2)
+        if stock is None:
+            stock = Stock(
+                COD1=cod1, COD2=cod2, STMIN=0, STMAX=0, STREP=0, DEP1=0, EST1=0, ESTT1=0,
+                DEP2=0, EST2=0, ESTT2=0, STANT=0, PULG=Decimal("0"), MTR=Decimal("0"),
+                STUNID=Decimal("0"), ENTMES=Decimal("0"), SALMES=Decimal("0"),
+                AJEMES=Decimal("0"), AJSMES=Decimal("0"),
+            )
+            self.db.add(stock)
+
+        # SUMA en vez de restar (EmiFact.frm:1864-1882, rama Else) —
+        # devolución real, el artículo vuelve a estar disponible.
+        if renglon.cantidad_unidades > 0:
+            stock.STUNID = (stock.STUNID or Decimal("0")) + renglon.cantidad_unidades
+            stock.ENTMES = (stock.ENTMES or Decimal("0")) + renglon.cantidad_unidades
+        if renglon.mtr > 0:
+            stock.STUNID = (stock.STUNID or Decimal("0")) + renglon.mtr
+            stock.ENTMES = (stock.ENTMES or Decimal("0")) + renglon.mtr
+        stock.FACTUAL = fecha
+        stock.USUARIO = usuario6
+
+        # --- MovStock -----------------------------------------------------
+        self.db.add(
+            MovStock(
+                COD1=cod1, COD2=cod2, TIPO=codmovs, PTOVTA=punto_venta, CPBTE=numero_comprobante,
+                ITEM=item, FECHA=ahora, CANT=renglon.cantidad_unidades, PULG=renglon.pulg,
+                MTR=renglon.mtr, MILIM=renglon.milim, TELAS=renglon.telas, USUARIO=usuario6,
+            )
+        )
+
+        # --- Fcestad1 (estadística por artículo, TIPO=2) ------------------
+        self.db.add(
+            Fcestad1(
+                COD1=cod1, COD2=cod2, TIPO=self.TIPO_NC, LETRA=letra, PTOVTA=punto_venta,
+                CPBTE=numero_comprobante, ITEM=item, CLTE=cliente.CODIGO, FECHA=fecha,
+                GPTIPO="", GPDSD="", GPHST="", PULG=renglon.pulg, MTR=renglon.mtr,
+                MILIM=renglon.milim, TELAS=renglon.telas, CANT=renglon.cantidad_unidades,
+                PCOS=Decimal("0"), PVTA=renglon.precio_unitario, PESP=renglon.precio_unitario,
+                BON=Decimal("0"), IVA=Decimal("0"), IMPTE=renglon.importe, TIPO9="0",
+                USUARIO=usuario6,
+            )
+        )
+        # Sin reversa de Despacho/lote puntual — ver docstring de la clase.
+
+    def _upsert_totales(
+        self, fecha: date, letra: str, total: "TotalFactura", total_cantidad_unidades: Decimal, usuario6: str
+    ) -> Totales:
+        """Réplica de `Graba()` Case 2 (NC, RESTA) — líneas 2126-2141,
+        mismos campos que `EmisionFacturaService._upsert_totales` (Case
+        1) pero restando en vez de sumando, y contando en `NCA`/`NCB` en
+        vez de `FACA`/`FACB`."""
+        totales = self.repos.totales().by_fecha(fecha)
+        if totales is None:
+            totales = Totales(FECHA=fecha)
+            self.db.add(totales)
+
+        def _sumar(campo: str, delta) -> None:
+            actual = getattr(totales, campo) or 0
+            setattr(totales, campo, actual + delta)
+
+        _sumar("PVTA", -total.neto_gravado)
+        _sumar("PESP", -total.neto_gravado)
+        if letra == "A":
+            _sumar("NCA", 1)
+            _sumar("UNIDA", -int(total_cantidad_unidades))
+            _sumar("PESPA", -total.neto_gravado)
+        else:  # "B"
+            _sumar("NCB", 1)
+            _sumar("UNIDB", -int(total_cantidad_unidades))
+            _sumar("PESPB", -total.neto_gravado)
+
+        totales.FACTUAL = fecha
+        totales.USUARIO = usuario6
+        return totales
+
+
+# ---------------------------------------------------------------------------
 # EmisionReciboService
 # ---------------------------------------------------------------------------
 
