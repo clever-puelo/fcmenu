@@ -179,11 +179,12 @@ class FacturadorWindow(QMainWindow):
         fila_datos.addWidget(self.chk_en_dolares)
 
         fila_datos.addStretch()
+        # El label "Letra" aparte se sacó (feedback del usuario,
+        # 2026-08-19: "Sacar la letra porque se repite, ya está en el
+        # nro de factura") — la letra ya queda visible acá mismo, entre
+        # paréntesis junto al número (ver `_refrescar_proximo_numero`).
         self.lbl_proximo_numero = QLabel("Próx. Nº: —")
         fila_datos.addWidget(self.lbl_proximo_numero)
-        fila_datos.addSpacing(16)
-        self.lbl_letra = QLabel("Letra: —")
-        fila_datos.addWidget(self.lbl_letra)
         layout.addLayout(fila_datos)
 
         self._cargar_vendedores()
@@ -219,47 +220,45 @@ class FacturadorWindow(QMainWindow):
     # Pie
     # ------------------------------------------------------------------
     def _armar_pie(self) -> QGroupBox:
-        # Rediseño compacto en dos líneas horizontales (feedback del
-        # usuario, 2026-08-15: "el panel de totales es muy alto y vacío")
-        # — antes era un QFormLayout de 7 filas apiladas. Subtotal a la
-        # izquierda (destacado) en la primera línea; TOTAL destacado +
-        # Emitir a la derecha en la segunda.
+        # Rediseño compacto en UNA sola línea horizontal (feedback del
+        # usuario, 2026-08-19: "el panel inferior de totales hacerlo más
+        # corto juntando líneas, para dar más espacio al detalle" — antes
+        # eran 2 líneas; la reducción de las 2 a 1 le devuelve esa
+        # segunda línea de alto al Detalle, que es donde el usuario
+        # necesita ver más renglones a la vez).
         grupo = QGroupBox("Totales")
-        layout = QVBoxLayout(grupo)
+        layout = QHBoxLayout(grupo)
 
-        fila1 = QHBoxLayout()
         lbl_subtotal_titulo = QLabel("Subtotal:")
-        lbl_subtotal_titulo.setStyleSheet("font-weight: bold; font-size: 13pt;")
+        lbl_subtotal_titulo.setStyleSheet("font-weight: bold;")
         self.lbl_subtotal = QLabel("$ 0,00")
-        self.lbl_subtotal.setStyleSheet("font-weight: bold; font-size: 13pt;")
-        fila1.addWidget(lbl_subtotal_titulo)
-        fila1.addWidget(self.lbl_subtotal)
-        fila1.addSpacing(24)
+        self.lbl_subtotal.setStyleSheet("font-weight: bold;")
+        layout.addWidget(lbl_subtotal_titulo)
+        layout.addWidget(self.lbl_subtotal)
+        layout.addSpacing(16)
 
-        fila1.addWidget(QLabel("Descuento:"))
+        layout.addWidget(QLabel("Desc.:"))
         self.lbl_descuento = QLabel("$ 0,00")
-        fila1.addWidget(self.lbl_descuento)
+        layout.addWidget(self.lbl_descuento)
 
-        fila1.addWidget(QLabel("Neto Gravado:"))
+        layout.addWidget(QLabel("Neto Grav.:"))
         self.lbl_neto = QLabel("$ 0,00")
-        fila1.addWidget(self.lbl_neto)
+        layout.addWidget(self.lbl_neto)
 
-        fila1.addWidget(QLabel("IVA Insc.:"))
+        layout.addWidget(QLabel("IVA Insc.:"))
         self.lbl_iva = QLabel("$ 0,00")
-        fila1.addWidget(self.lbl_iva)
-        fila1.addStretch()
-        layout.addLayout(fila1)
+        layout.addWidget(self.lbl_iva)
+        layout.addSpacing(16)
 
-        fila2 = QHBoxLayout()
-        fila2.addWidget(QLabel("Percepción IIBB:"))
+        layout.addWidget(QLabel("Perc. IIBB:"))
         self.txt_porcentaje_iibb = QLineEdit("0")
-        self.txt_porcentaje_iibb.setMaximumWidth(50)
+        self.txt_porcentaje_iibb.setMaximumWidth(40)
         self.txt_porcentaje_iibb.editingFinished.connect(self._recalcular_totales)
-        fila2.addWidget(self.txt_porcentaje_iibb)
-        fila2.addWidget(QLabel("%"))
+        layout.addWidget(self.txt_porcentaje_iibb)
+        layout.addWidget(QLabel("%"))
         self.lbl_percepcion_iibb = QLabel("$ 0,00")
-        fila2.addWidget(self.lbl_percepcion_iibb)
-        fila2.addStretch()
+        layout.addWidget(self.lbl_percepcion_iibb)
+        layout.addStretch()
 
         # TOTAL centrado en la línea, dentro de un recuadro (feedback
         # del usuario, 2026-08-18, tercera ronda: "El total colocarlo en
@@ -267,27 +266,25 @@ class FacturadorWindow(QMainWindow):
         # recuadro") — el `addStretch()` de cada lado lo deja centrado
         # entre Percepción IIBB (izquierda) y Emitir/Salir (derecha).
         recuadro_total, self.lbl_total = crear_recuadro_destacado("TOTAL:")
-        fila2.addWidget(recuadro_total)
-        fila2.addStretch()
+        layout.addWidget(recuadro_total)
+        layout.addStretch()
 
         self.btn_emitir = QPushButton("Emitir")
-        self.btn_emitir.setStyleSheet("font-weight: bold; padding: 10px;")
+        self.btn_emitir.setStyleSheet("font-weight: bold; padding: 6px;")
         # Deshabilitado hasta que haya Importe (feedback del usuario,
         # 2026-08-15) — se habilita en `_recalcular_totales`.
         self.btn_emitir.setEnabled(False)
         self.btn_emitir.clicked.connect(self._on_emitir)
-        fila2.addWidget(self.btn_emitir)
+        layout.addWidget(self.btn_emitir)
 
         # Botón "Salir" (pedido del usuario, 2026-08-17) — la guarda de
         # "hay algo cargado, se va a perder" vive en `closeEvent` (no acá
         # directo) para cubrir también el cierre nativo de la subventana,
         # no sólo este botón.
-        fila2.addSpacing(12)
+        layout.addSpacing(12)
         btn_salir = QPushButton("Salir")
         btn_salir.clicked.connect(self.close)
-        fila2.addWidget(btn_salir)
-
-        layout.addLayout(fila2)
+        layout.addWidget(btn_salir)
 
         return grupo
 
@@ -313,7 +310,6 @@ class FacturadorWindow(QMainWindow):
         cliente = self.cliente_actual
         if cliente is None:
             self.lbl_cliente.setText("(sin cliente elegido)")
-            self.lbl_letra.setText("Letra: —")
             self.btn_nota_cliente.setEnabled(False)
             self.tiene_nota_cliente = False
             self.btn_nota_cliente.setStyleSheet("")
@@ -357,8 +353,6 @@ class FacturadorWindow(QMainWindow):
             NotaClienteDialog(self.repos, cliente.CODIGO, parent=self).exec()
             self._actualizar_boton_nota_cliente()
 
-        letra = self.factura_service.letra_comprobante(cliente.CIVA or 0, cliente.PCIA)
-        self.lbl_letra.setText(f"Letra: {letra}")
         self._refrescar_proximo_numero()
 
         if cliente.VEND is not None:

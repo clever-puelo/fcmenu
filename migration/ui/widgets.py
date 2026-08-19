@@ -111,6 +111,29 @@ def redimensionar_pct_pantalla(ventana: QWidget, ancho_pct: float, alto_pct: flo
     ventana.resize(ancho, alto)
 
 
+PX_POR_MM = 96 / 25.4
+
+
+def mm_a_px(mm: float) -> int:
+    """Convierte un margen en mm a píxeles, aproximado a 96 DPI —
+    suficiente para una separación visual en pantalla, no para
+    impresión (mismo criterio ya usado en `main_menu_window.py` para el
+    margen de Listados dentro del panel MDI)."""
+    return round(mm * PX_POR_MM)
+
+
+def compactar_alto_filas(tabla: QTableWidget, pct: float = 90) -> None:
+    """Fija el alto de fila de `tabla` a `pct`% del alto default de Qt
+    (`QHeaderView`, ~30px para el font default de Fusion — mismo valor
+    de referencia que ya usa `TablaBusqueda.__init__`) — pedido repetido
+    del usuario en Factura/Recibo/Precios/Stock (2026-08-19): "las filas
+    que sean un 10% más cortas, como para que entren más filas a la
+    vista". `setDefaultSectionSize()` aplica también a cualquier fila
+    que se agregue después (`insertRow()`), no hace falta reaplicar."""
+    alto_default = 30
+    tabla.verticalHeader().setDefaultSectionSize(round(alto_default * pct / 100))
+
+
 def crear_recuadro_destacado(etiqueta: str, texto_valor: str = "$ 0,00") -> tuple[QFrame, QLabel]:
     """Recuadro con borde para resaltar un total dentro de una fila de
     totales apretada a la izquierda (feedback del usuario, 2026-08-18,

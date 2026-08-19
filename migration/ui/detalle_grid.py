@@ -66,6 +66,7 @@ from .factura_renglon import (
     resolver_seccion_renglon,
 )
 from .nota_articulo_dialog import NotaArticuloDialog
+from .widgets import compactar_alto_filas
 
 # Columnas fijas — mismo criterio que FG1 del legacy: los segmentos
 # dinámicos (ALF1-7) siempre caen en la misma columna física según su
@@ -133,6 +134,9 @@ class DetalleGrid(QTableWidget):
         self.setSelectionBehavior(QAbstractItemView.SelectionBehavior.SelectItems)
         self.setSelectionMode(QAbstractItemView.SelectionMode.SingleSelection)
         self.verticalHeader().setVisible(False)
+        # Filas 10% más cortas (feedback del usuario, 2026-08-19): entran
+        # más renglones a la vista sin achicar la letra.
+        compactar_alto_filas(self)
         self.setEditTriggers(
             QAbstractItemView.EditTrigger.DoubleClicked
             | QAbstractItemView.EditTrigger.EditKeyPressed

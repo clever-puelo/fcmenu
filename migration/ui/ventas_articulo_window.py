@@ -35,7 +35,7 @@ from migration.repository import RepositoryFactory
 from migration.services import EstadisticaVentasService, NodoAgrupado
 
 from .factura_renglon import posiciones_activas_seccion
-from .widgets import EnteroLineEdit, redimensionar_pct_pantalla
+from .widgets import EnteroLineEdit, crear_recuadro_destacado, mm_a_px, redimensionar_pct_pantalla
 
 MESES = [
     "Enero", "Febrero", "Marzo", "Abril", "Mayo", "Junio",
@@ -131,10 +131,13 @@ class VentasArticuloWindow(QMainWindow):
         self.lbl_cantidad = QLabel("0")
         fila_totales.addWidget(self.lbl_cantidad)
         fila_totales.addStretch()
-        fila_totales.addWidget(QLabel("Total Importe :"))
-        self.lbl_total = QLabel("$ 0,00")
-        self.lbl_total.setStyleSheet("font-weight: bold;")
-        fila_totales.addWidget(self.lbl_total)
+        # Total Importe en un recuadro, corrido 10mm hacia el centro
+        # desde el borde derecho (feedback del usuario, 2026-08-19: "El
+        # total importe colocarlo 10mm al centro y en un recuadro" —
+        # mismo pedido que en VentasSeccionWindow).
+        recuadro_total, self.lbl_total = crear_recuadro_destacado("Total Importe:")
+        fila_totales.addWidget(recuadro_total)
+        fila_totales.addSpacing(mm_a_px(10))
         layout.addLayout(fila_totales)
 
     def _poblar_combos(self) -> None:
@@ -188,6 +191,11 @@ class VentasArticuloWindow(QMainWindow):
         self.arbol.expandAll()
         for col in range(len(COLUMNAS)):
             self.arbol.resizeColumnToContents(col)
+        # Precio más ancha / Importe más angosta que el auto-ajuste por
+        # contenido (feedback del usuario, 2026-08-19: "La columna
+        # precio más ancha e importe debe tener menos ancho").
+        self.arbol.setColumnWidth(COL_PVTA, self.arbol.columnWidth(COL_PVTA) + 40)
+        self.arbol.setColumnWidth(COL_IMPORTE, max(self.arbol.columnWidth(COL_IMPORTE) - 30, 60))
 
         self.lbl_cantidad.setText(str(resultado.cantidad_movimientos))
         self.lbl_total.setText(f"$ {format_decimal(resultado.total_importe)}")

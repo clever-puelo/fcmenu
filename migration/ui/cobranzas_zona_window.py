@@ -15,7 +15,7 @@ replicar el mecanismo interno del FlexGrid).
 
 from __future__ import annotations
 
-from PyQt6.QtCore import Qt
+from PyQt6.QtCore import Qt, QTimer
 from PyQt6.QtWidgets import (
     QComboBox,
     QHBoxLayout,
@@ -111,7 +111,24 @@ class CobranzasZonaWindow(QMainWindow):
             self.combo_zona.addItem(f"{cod}-{(zona.DESCRI or '').strip()}", int(cod))
         self.combo_zona.blockSignals(False)
         if self.combo_zona.count():
-            self._on_zona_cambiada()
+            # Diferido (bug real reportado por el usuario, 2026-08-19:
+            # "rompe la primera vez que se lo llama. Muestra el
+            # 'procesando...' pero en la ubicación en pantalla donde se
+            # abrió el programa. Debe respetar la posición física de la
+            # ventana que lo invoca") — llamado síncrono acá, dentro de
+            # `__init__`, corre ANTES de que `MainMenuWindow.
+            # _posicionar_subventana()` reubique esta ventana dentro del
+            # panel MDI; el `QProgressDialog` de "Procesando..." (parent=
+            # self, ver `ejecutar_con_progreso`) hereda la posición que
+            # `self` tiene EN ESE MOMENTO — todavía sin reubicar, la del
+            # punto donde arrancó la app. Llamadas posteriores (cambiar
+            # la Zona a mano) ya corren con la ventana bien posicionada,
+            # por eso sólo falla "la primera vez". Encolar con
+            # `QTimer.singleShot(0, ...)` es el mismo patrón ya usado en
+            # Facturador/Recibo para el buscador de Cliente: deja que la
+            # ventana ya esté mostrada y posicionada antes de disparar
+            # la consulta.
+            QTimer.singleShot(0, self._on_zona_cambiada)
 
     # ------------------------------------------------------------------
     def _on_zona_cambiada(self) -> None:

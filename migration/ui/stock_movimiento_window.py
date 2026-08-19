@@ -96,12 +96,19 @@ class StockMovimientoWindow(QMainWindow):
     def _armar_tipo_y_forma(self) -> QWidget:
         contenedor = QWidget()
         fila = QHBoxLayout(contenedor)
+        fila.setContentsMargins(0, 0, 0, 0)
 
         # Entradas/Salidas uno al lado del otro, no apilados — mismo
         # motivo (2026-08-17, segunda ronda): esto y "Forma" en fila
         # (ver abajo) eran las 2 secciones más altas de la ventana.
+        # Márgenes internos apretados (feedback del usuario, 2026-08-19:
+        # "subir los paneles de Tipo de mov. y forma y reducir su
+        # altura") — sólo tienen una fila de radios adentro, el margen
+        # default de Qt les sobraba y empujaba todo lo de abajo (Nº de
+        # Cpbte., Renglones) más lejos de lo necesario.
         grupo_tipo = QGroupBox("Tipo de Movimiento")
         layout_tipo = QHBoxLayout(grupo_tipo)
+        layout_tipo.setContentsMargins(8, 4, 8, 4)
         self.radio_entrada = QRadioButton("Entradas")
         self.radio_salida = QRadioButton("Salidas")
         self.radio_entrada.setChecked(True)
@@ -118,6 +125,7 @@ class StockMovimientoWindow(QMainWindow):
         # ya tiene stretch=1 (ancha).
         self.grupo_forma = QGroupBox("Forma")
         self.layout_forma = QHBoxLayout(self.grupo_forma)
+        self.layout_forma.setContentsMargins(8, 4, 8, 4)
         self.grupo_botones_forma = QButtonGroup(self)
         self.radios_forma: dict[str, QRadioButton] = {}
         fila.addWidget(self.grupo_forma, stretch=1)

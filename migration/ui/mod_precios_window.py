@@ -31,6 +31,7 @@ from typing import Optional
 
 from PyQt6.QtWidgets import (
     QComboBox,
+    QFrame,
     QGroupBox,
     QHBoxLayout,
     QLabel,
@@ -51,6 +52,7 @@ from migration.repository import RepositoryFactory
 from migration.services import ArticuloService
 
 from .decimals import format_decimal, parse_decimal
+from .widgets import compactar_alto_filas
 
 
 class ModPreciosWindow(QMainWindow):
@@ -79,13 +81,21 @@ class ModPreciosWindow(QMainWindow):
 
         layout.addLayout(self._armar_fila_modo())
         layout.addWidget(self._armar_grupo_seccion())
-        layout.addWidget(self._armar_grupo_porcentaje())
 
+        # El panel de Artículos sube y crece (feedback del usuario,
+        # 2026-08-19: "usar todo el alto del panel central... subir el
+        # panel de artículos, hacerlo más grande") — ya no compite con
+        # el panel de Porcentaje aparte, que se sacó del todo (ver
+        # `_armar_fila_modo`, ahora en un recuadro en esa misma línea).
         self.tabla = QTableWidget(0, 5)
         self.tabla.setHorizontalHeaderLabels(
             ["Sección", "Código", "Precio Actual", "Precio Nuevo", "Stock"]
         )
         self.tabla.setEditTriggers(QTableWidget.EditTrigger.NoEditTriggers)
+        # Filas 10% más cortas (feedback del usuario, 2026-08-19), mismo
+        # criterio que el Detalle del Facturador y el Recibo: entran más
+        # renglones a la vista.
+        compactar_alto_filas(self.tabla)
         layout.addWidget(self.tabla, stretch=1)
 
         self.lbl_cantidad = QLabel("")
@@ -102,6 +112,23 @@ class ModPreciosWindow(QMainWindow):
         fila.addWidget(self.radio_por_seccion)
         fila.addWidget(self.radio_todos)
         fila.addStretch()
+
+        # Porcentaje en un recuadro arriba a la derecha, en la misma
+        # línea de "Por Sección/Todos" (feedback del usuario, 2026-08-19)
+        # — antes vivía en su propio panel debajo de Sección (el
+        # "segundo panel", ya sacado del todo).
+        recuadro_porcentaje = QFrame()
+        recuadro_porcentaje.setFrameShape(QFrame.Shape.Box)
+        recuadro_porcentaje.setStyleSheet("QFrame { border: 1px solid #888; border-radius: 6px; }")
+        fila_porcentaje = QHBoxLayout(recuadro_porcentaje)
+        fila_porcentaje.setContentsMargins(10, 4, 10, 4)
+        fila_porcentaje.addWidget(QLabel("Porcentaje :"))
+        self.txt_porcentaje = QLineEdit("0")
+        self.txt_porcentaje.setMaximumWidth(80)
+        self.txt_porcentaje.setToolTip("En más o menos — colocar signo '-' adelante para descuento")
+        self.txt_porcentaje.editingFinished.connect(self._actualizar_vista)
+        fila_porcentaje.addWidget(self.txt_porcentaje)
+        fila.addWidget(recuadro_porcentaje)
         return fila
 
     def _armar_grupo_seccion(self) -> QGroupBox:
@@ -131,18 +158,6 @@ class ModPreciosWindow(QMainWindow):
 
         fila.addStretch()
         return self.grupo_seccion
-
-    def _armar_grupo_porcentaje(self) -> QGroupBox:
-        box = QGroupBox()
-        fila = QHBoxLayout(box)
-        fila.addWidget(QLabel("Porcentaje :"))
-        self.txt_porcentaje = QLineEdit("0")
-        self.txt_porcentaje.setMaximumWidth(100)
-        self.txt_porcentaje.setToolTip("En más o menos — colocar signo '-' adelante para descuento")
-        self.txt_porcentaje.editingFinished.connect(self._actualizar_vista)
-        fila.addWidget(self.txt_porcentaje)
-        fila.addStretch()
-        return box
 
     def _armar_barra_botones(self) -> QHBoxLayout:
         fila = QHBoxLayout()

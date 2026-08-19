@@ -85,7 +85,7 @@ from .decimals import format_decimal, parse_decimal
 from .nota_cliente_dialog import NotaClienteDialog
 from .pago_dialog import TIPOS_RETENCION, PagoDialog
 from .pdf_preview_dialog import PdfPreviewDialog
-from .widgets import MontoLineEdit, redimensionar_pct_pantalla
+from .widgets import MontoLineEdit, compactar_alto_filas, redimensionar_pct_pantalla
 
 ETIQUETAS_TIPREG = dict(TIPOS_RETENCION)
 
@@ -168,9 +168,14 @@ class ReciboWindow(QMainWindow):
         # apilados). Antes eran 4 secciones en una sola columna vertical;
         # ahora Pendientes+Pagos comparten una fila, así se gana el alto
         # completo de esa fila para el pie.
+        # Pendientes 20% más angosto / Pagos 20% más ancho (feedback del
+        # usuario, 2026-08-19) — la proporción original era 2:1 (66,7%/
+        # 33,3% del ancho); reducir un panel 20% y agrandar el otro 20%
+        # sobre esa base da la nueva proporción 4:3 (53,3%/40%,
+        # normalizado).
         fila_central = QHBoxLayout()
-        fila_central.addWidget(self._armar_pendientes(), stretch=2)
-        fila_central.addWidget(self._armar_pagos(), stretch=1)
+        fila_central.addWidget(self._armar_pendientes(), stretch=4)
+        fila_central.addWidget(self._armar_pagos(), stretch=3)
         layout.addLayout(fila_central, stretch=1)
 
         layout.addWidget(self._armar_pie())
@@ -225,8 +230,11 @@ class ReciboWindow(QMainWindow):
         self.tabla_pendientes.verticalHeader().setVisible(False)
         # Celdas más grandes (feedback del usuario, 2026-08-15: "esta
         # todo muy apretado") — fila más alta + tipografía un poco más
-        # grande + padding lateral en cada celda.
-        self.tabla_pendientes.verticalHeader().setDefaultSectionSize(36)
+        # grande + padding lateral en cada celda. Achicada un 10% de
+        # nuevo (feedback del usuario, 2026-08-19: "reducir la altura de
+        # las filas 10% para que entren más renglones") sobre esa misma
+        # base de 36px, no sobre el default de Qt.
+        self.tabla_pendientes.verticalHeader().setDefaultSectionSize(round(36 * 0.9))
         fuente = self.tabla_pendientes.font()
         fuente.setPointSize(fuente.pointSize() + 1)
         self.tabla_pendientes.setFont(fuente)
@@ -259,11 +267,20 @@ class ReciboWindow(QMainWindow):
         grupo = QGroupBox("Pagos")
         layout = QVBoxLayout(grupo)
 
+        # Ancho acorde a la cantidad de dígitos que va a alojar (feedback
+        # del usuario, 2026-08-19: antes tenía `stretch=1` y quedaba
+        # estirado a todo el ancho del panel) — mismo ancho que el resto
+        # de los `MontoLineEdit` de importe del sistema (120px, ver
+        # `txt_anticipo` acá mismo). Centrado con `addStretch()` a los
+        # dos lados en vez de pegado a la izquierda.
         fila_efectivo = QHBoxLayout()
+        fila_efectivo.addStretch()
         fila_efectivo.addWidget(QLabel("Efectivo :"))
         self.txt_efectivo = MontoLineEdit("0")
+        self.txt_efectivo.setMaximumWidth(120)
         self.txt_efectivo.editingFinished.connect(self._recalcular_totales)
-        fila_efectivo.addWidget(self.txt_efectivo, stretch=1)
+        fila_efectivo.addWidget(self.txt_efectivo)
+        fila_efectivo.addStretch()
         layout.addLayout(fila_efectivo)
 
         self.btn_agregar_pago = QPushButton("Agregar Cheque/Retención...")
@@ -279,6 +296,7 @@ class ReciboWindow(QMainWindow):
         self.tabla_pagos.verticalHeader().setVisible(False)
         self.tabla_pagos.setEditTriggers(QAbstractItemView.EditTrigger.NoEditTriggers)
         self.tabla_pagos.setSelectionBehavior(QAbstractItemView.SelectionBehavior.SelectRows)
+        compactar_alto_filas(self.tabla_pagos)
         self.tabla_pagos.itemClicked.connect(self._on_click_pago)
         layout.addWidget(self.tabla_pagos, stretch=1)
 

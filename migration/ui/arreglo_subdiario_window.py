@@ -17,6 +17,7 @@ from PyQt6.QtWidgets import (
     QComboBox,
     QDateEdit,
     QFormLayout,
+    QGridLayout,
     QGroupBox,
     QHBoxLayout,
     QLabel,
@@ -161,12 +162,16 @@ class ArregloSubdiarioWindow(QMainWindow):
         fila_cpbte.addWidget(self.txt_prefijo)
         fila_cpbte.addWidget(QLabel("Nro. Cpbte. :"))
         fila_cpbte.addWidget(self.txt_cpbte)
-        fila_cpbte.addStretch()
-        form.addRow("Letra :", fila_cpbte)
-
+        fila_cpbte.addSpacing(12)
+        # "N U E V O" en la misma línea que Letra/Prefijo/Nro. Cpbte., ya
+        # no en su propia fila (feedback del usuario, 2026-08-19: "Es muy
+        # largo... achicar el panel de comprobante") — una fila menos en
+        # el panel.
         self.lbl_estado = QLabel()
         self.lbl_estado.setStyleSheet("color: #b00020; font-weight: bold;")
-        form.addRow("", self.lbl_estado)
+        fila_cpbte.addWidget(self.lbl_estado)
+        fila_cpbte.addStretch()
+        form.addRow("Letra :", fila_cpbte)
 
         return grupo
 
@@ -194,25 +199,27 @@ class ArregloSubdiarioWindow(QMainWindow):
         self.txt_nombre.setMaximumWidth(320)
         form.addRow("Razón Social :", self.txt_nombre)
 
+        # Pcia., CUIT y Cod.IVA en la misma línea (feedback del usuario,
+        # 2026-08-19: "Subir cuit y codiva a la línea de pcia. y achicar
+        # ese panel") — antes CUIT/Cod.IVA tenían su propia fila, una
+        # fila menos en el panel de Cliente.
         self.txt_pcia = UpperCaseLineEdit()
         self.txt_pcia.setMaxLength(1)
         self.txt_pcia.setMaximumWidth(40)
-        form.addRow("Pcia. (letra) :", self.txt_pcia)
-
-        # Cod.IVA y CUIT en la misma línea (feedback del usuario,
-        # 2026-08-18, segunda ronda) — antes 2 filas propias.
         self.txt_cuit = EnteroLineEdit()
         self.txt_cuit.setMaximumWidth(110)
         self.combo_civa = QComboBox()
         for codigo, etiqueta in CIVA_OPCIONES:
             self.combo_civa.addItem(etiqueta, codigo)
         self.combo_civa.setMaximumWidth(190)
-        fila_civa_cuit = QHBoxLayout()
-        fila_civa_cuit.addWidget(self.txt_cuit)
-        fila_civa_cuit.addWidget(QLabel("Cod. IVA :"))
-        fila_civa_cuit.addWidget(self.combo_civa)
-        fila_civa_cuit.addStretch()
-        form.addRow("CUIT :", fila_civa_cuit)
+        fila_pcia = QHBoxLayout()
+        fila_pcia.addWidget(self.txt_pcia)
+        fila_pcia.addWidget(QLabel("CUIT :"))
+        fila_pcia.addWidget(self.txt_cuit)
+        fila_pcia.addWidget(QLabel("Cod. IVA :"))
+        fila_pcia.addWidget(self.combo_civa)
+        fila_pcia.addStretch()
+        form.addRow("Pcia. (letra) :", fila_pcia)
 
         # Vendedor y Zona en la misma línea (feedback del usuario,
         # 2026-08-18, segunda ronda) — antes 2 filas propias.
@@ -255,7 +262,10 @@ class ArregloSubdiarioWindow(QMainWindow):
 
     def _armar_importes(self) -> QGroupBox:
         grupo = QGroupBox("Importes")
-        form = self._form_compacto(grupo)
+        grid = QGridLayout(grupo)
+        grid.setVerticalSpacing(3)
+        grid.setHorizontalSpacing(6)
+        grid.setContentsMargins(6, 4, 6, 4)
 
         # Campos acordes al tamaño de los datos (feedback del usuario,
         # 2026-08-18, tercera ronda) — importes topeados como en
@@ -263,31 +273,36 @@ class ArregloSubdiarioWindow(QMainWindow):
         # angostos todavía.
         self.txt_grins = MontoLineEdit()
         self.txt_grins.setMaximumWidth(120)
-        form.addRow("Gravado :", self.txt_grins)
         self.txt_ivains = MontoLineEdit()
         self.txt_ivains.setMaximumWidth(120)
-        form.addRow("IVA Inscr. :", self.txt_ivains)
         self.txt_ivanoins = MontoLineEdit()
         self.txt_ivanoins.setMaximumWidth(120)
-        form.addRow("IVA No Insc. :", self.txt_ivanoins)
         self.txt_exento = MontoLineEdit()
         self.txt_exento.setMaximumWidth(120)
-        form.addRow("Exento :", self.txt_exento)
         self.txt_bon = MontoLineEdit()
         self.txt_bon.setMaximumWidth(120)
-        form.addRow("Descuentos :", self.txt_bon)
         self.txt_porcib = MontoLineEdit()
         self.txt_porcib.setMaximumWidth(80)
-        form.addRow("% I.B. :", self.txt_porcib)
         self.txt_totib = MontoLineEdit()
         self.txt_totib.setMaximumWidth(120)
-        form.addRow("Impte. I.B. :", self.txt_totib)
         self.txt_items = EnteroLineEdit("0")
         self.txt_items.setMaximumWidth(70)
-        form.addRow("Items :", self.txt_items)
         self.txt_totcan = EnteroLineEdit("0")
         self.txt_totcan.setMaximumWidth(70)
-        form.addRow("Tot.Unid. :", self.txt_totcan)
+
+        # 3 importes por línea (feedback del usuario, 2026-08-19: "Es muy
+        # largo y se sale del panel central... colocar 3 importes por
+        # línea") — antes 1 por fila (9 filas apiladas en un
+        # `QFormLayout`), ahora 3 filas de 3 en una grilla.
+        campos = [
+            ("Gravado :", self.txt_grins), ("IVA Inscr. :", self.txt_ivains), ("IVA No Insc. :", self.txt_ivanoins),
+            ("Exento :", self.txt_exento), ("Descuentos :", self.txt_bon), ("% I.B. :", self.txt_porcib),
+            ("Impte. I.B. :", self.txt_totib), ("Items :", self.txt_items), ("Tot.Unid. :", self.txt_totcan),
+        ]
+        for indice, (etiqueta, campo) in enumerate(campos):
+            fila, columna = divmod(indice, 3)
+            grid.addWidget(QLabel(etiqueta), fila, columna * 2)
+            grid.addWidget(campo, fila, columna * 2 + 1)
 
         return grupo
 

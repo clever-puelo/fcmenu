@@ -36,7 +36,7 @@ from migration.repository import RepositoryFactory
 from migration.services import EstadisticaVentasService
 
 from .factura_renglon import posiciones_activas_seccion
-from .widgets import TablaBusqueda, crear_boton_hoy, redimensionar_pct_pantalla
+from .widgets import TablaBusqueda, crear_boton_hoy, crear_recuadro_destacado, mm_a_px, redimensionar_pct_pantalla
 
 COLUMNAS = ["Fecha", "Comprobante", "Cód.", "Cliente", "Pulg", "Mtr", "MM", "Telas", "Cant.", "P.Venta", "Importe"]
 COL_CODIGO, COL_CLIENTE, COL_PULG, COL_MTR, COL_MM, COL_TELAS, COL_CANT, COL_PVTA, COL_IMPORTE = range(2, 11)
@@ -103,10 +103,12 @@ class VentasSeccionWindow(QMainWindow):
         self.lbl_cantidad = QLabel("0")
         fila_totales.addWidget(self.lbl_cantidad)
         fila_totales.addStretch()
-        fila_totales.addWidget(QLabel("Total Importe :"))
-        self.lbl_total = QLabel("$ 0,00")
-        self.lbl_total.setStyleSheet("font-weight: bold;")
-        fila_totales.addWidget(self.lbl_total)
+        # Total Importe en un recuadro, corrido 10mm hacia el centro
+        # desde el borde derecho (feedback del usuario, 2026-08-19: "El
+        # total importe colocarlo 10mm al centro y en un recuadro").
+        recuadro_total, self.lbl_total = crear_recuadro_destacado("Total Importe:")
+        fila_totales.addWidget(recuadro_total)
+        fila_totales.addSpacing(mm_a_px(10))
         layout.addLayout(fila_totales)
 
         self.fecha_desde.dateChanged.connect(self._on_filtro_cambiado)

@@ -110,13 +110,14 @@ def _mm_a_px(mm: float) -> int:
 # — por eso fue la única que el usuario no reportó como desajustada).
 PCT_MDI_POR_CLASE: dict[str, tuple[float, float]] = {
     "TablasWindow": (80, 75),
-    "FacturadorWindow": (90, 85),
-    "ReciboWindow": (85, 60),
-    "ModPreciosWindow": (75, 70),
-    "StockMovimientoWindow": (80, 80),
-    "CtaCteWindow": (92, 88),
+    # Alto subido a 95% (feedback del usuario, 2026-08-19: "usar todo el
+    # alto del panel central") — antes 70%, quedaba con espacio vacío
+    # abajo mientras el panel de Artículos se veía chico.
+    "ModPreciosWindow": (75, 95),
+    # Alto subido a 95% (feedback del usuario, 2026-08-19: "usar todo el
+    # alto del panel central") — antes 80%.
+    "StockMovimientoWindow": (80, 95),
     "CobranzasZonaWindow": (90, 85),
-    "FacturasEmitidasWindow": (95, 88),
     "TotalesDiariosWindow": (85, 88),
     "ChequesConsultaWindow": (75, 88),
     "VentasSeccionWindow": (80, 88),
@@ -127,6 +128,18 @@ PCT_MDI_POR_CLASE: dict[str, tuple[float, float]] = {
     "ArregloSubdiarioWindow": (60, 60),
     "ParametrosWindow": (55, 45),
 }
+
+# Pantallas que el usuario pidió ver "en todo el largo y ancho
+# disponible, o maximizada" (feedback 2026-08-19: Facturador, Recibo,
+# Cta.Cte., Facturas Emitidas — "queda poco detalle" con el % que tenían
+# antes) — en vez de subir el % a mano (ya se probó y no convergía, ver
+# docstring de `PCT_MDI_POR_CLASE`), se maximizan de verdad dentro del
+# panel MDI (`QMdiSubWindow.showMaximized()`): ocupan el 100% del panel
+# real sin importar la resolución, y quedan afuera de `PCT_MDI_POR_CLASE`
+# porque ese cálculo por % ya no aplica.
+MAXIMIZAR_AL_ABRIR_MDI: frozenset[str] = frozenset(
+    {"FacturadorWindow", "ReciboWindow", "CtaCteWindow", "FacturasEmitidasWindow"}
+)
 
 
 def _envolver_en_dos_lineas(texto: str, fuente: QFont, ancho_disponible: int) -> str:
@@ -829,6 +842,9 @@ class MainMenuWindow(QMainWindow):
         area = self.mdi.viewport().size()
         nombre_clase = type(ventana).__name__
         minimo = subventana.minimumSizeHint()
+        if nombre_clase in MAXIMIZAR_AL_ABRIR_MDI:
+            subventana.showMaximized()
+            return
         if nombre_clase == "ListadosWindow":
             margen_lateral = _mm_a_px(MARGEN_LISTADOS_LATERAL_MM)
             margen_superior = _mm_a_px(MARGEN_LISTADOS_SUPERIOR_MM)

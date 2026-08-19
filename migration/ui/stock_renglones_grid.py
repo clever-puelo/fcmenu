@@ -43,6 +43,7 @@ from migration.repository import RepositoryFactory
 from migration.services import RenglonMovimientoStock, StockMovimientoService
 
 from .articulo_busqueda_window import ArticuloBusquedaWindow
+from .widgets import compactar_alto_filas
 
 COL_CODIGO = 0
 COL_DESCRIPCION = 1
@@ -82,6 +83,10 @@ class StockRenglonesGrid(QTableWidget):
         self.setSelectionBehavior(QAbstractItemView.SelectionBehavior.SelectItems)
         self.setSelectionMode(QAbstractItemView.SelectionMode.SingleSelection)
         self.verticalHeader().setVisible(False)
+        # Filas 10% más cortas (feedback del usuario, 2026-08-19), mismo
+        # criterio que el Detalle del Facturador: entran más renglones a
+        # la vista sin achicar la letra.
+        compactar_alto_filas(self)
         self.setEditTriggers(
             QAbstractItemView.EditTrigger.DoubleClicked
             | QAbstractItemView.EditTrigger.EditKeyPressed
