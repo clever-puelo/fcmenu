@@ -102,13 +102,24 @@ class NumeracionYCAEProvider(ABC):
         importe_iibb: Decimal,
         importe_total: Decimal,
         fecha_cbte: date,
+        importe_no_gravado: Decimal = Decimal("0"),
     ) -> ResultadoCAE:
         """Réplica de `WSFE.Aut(...)` (`EmiFact.frm:2650-2654`). El
         `Nro_Doc` del receptor siempre viaja como CUIT (`Tipo_Doc=80`,
         `TIPO_DOC_CUIT`) — igual que el legacy, que nunca contempla
         Consumidor Final sin CUIT (código 99) ni DNI (código 96); si se
         necesita eso, es una ampliación de alcance a confirmar, no algo
-        que este método deba inventar."""
+        que este método deba inventar.
+
+        `importe_no_gravado`: conceptos que integran `importe_total`
+        pero no la base gravada de IVA (ej. renglones "SIN IVA" de una
+        Nota de Crédito de Concepto Libre, ver `TotalNotaCreditoConcepto`
+        en `services.py`) — viaja como `ImpTotConc` del WSFEv1 real. El
+        legacy (`EmiFact.frm Sub ConectaAFIP` línea 2635) lo hardcodea en
+        `"0.00"` SIEMPRE, incluso cuando el operador cargó un importe
+        "SIN IVA" real — bug real confirmado y NO replicado (decisión
+        del usuario, 2026-08-19): acá se manda tal cual, para que el CAE
+        pedido coincida con el total que el operador realmente cargó."""
 
 
 class AfipWSFEv1Stub(NumeracionYCAEProvider):
@@ -136,6 +147,7 @@ class AfipWSFEv1Stub(NumeracionYCAEProvider):
         importe_iibb: Decimal,
         importe_total: Decimal,
         fecha_cbte: date,
+        importe_no_gravado: Decimal = Decimal("0"),
     ) -> ResultadoCAE:
         if not cuit_receptor or not cuit_receptor.strip():
             raise ValueError("No se puede solicitar CAE sin CUIT del receptor.")
@@ -398,6 +410,7 @@ class AfipWSFEv1Cliente(NumeracionYCAEProvider):
         importe_iibb: Decimal,
         importe_total: Decimal,
         fecha_cbte: date,
+        importe_no_gravado: Decimal = Decimal("0"),
         condicion_iva_receptor_id: Optional[int] = None,
     ) -> ResultadoCAE:
         if not cuit_receptor or not cuit_receptor.strip():
@@ -414,7 +427,10 @@ class AfipWSFEv1Cliente(NumeracionYCAEProvider):
             "CbteHasta": cbte_nro,
             "CbteFch": fecha_txt,
             "ImpTotal": float(importe_total),
-            "ImpTotConc": 0.00,
+            # Bug real del legacy NO replicado (ver docstring de
+            # `NumeracionYCAEProvider.solicitar_cae`): acá SÍ viaja el
+            # importe "SIN IVA" real, no un "0.00" hardcodeado.
+            "ImpTotConc": float(importe_no_gravado),
             "ImpNeto": float(importe_neto),
             "ImpOpEx": 0.00,
             "ImpTrib": float(importe_iibb),

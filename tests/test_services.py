@@ -38,12 +38,15 @@ from migration.services import (
     ArticuloService,
     ChequeService,
     ClienteService,
+    ConceptoNotaCredito,
     CuentaCorrienteService,
     EmisionFacturaService,
+    EmisionNotaCreditoService,
     EmisionReciboService,
     EstadisticaVentasService,
     FacturaService,
     FacturasEmitidasService,
+    NotaCreditoConceptoService,
     PagoCheque,
     PagoRetencion,
     RenglonEmision,
@@ -1480,6 +1483,169 @@ class TestPendientesCobroYCorrelativo:
     def test_proximo_correlativo_da_la_vuelta_pasado_99(self, db):
         cliente = Cliente(CODIGO=1, NOMB="X", CORR1=99)
         assert RepositoryFactory(db).cliente().proximo_correlativo(cliente) == 1
+
+
+# ---------------------------------------------------------------------------
+# NotaCreditoConceptoService / EmisionNotaCreditoService
+# ---------------------------------------------------------------------------
+
+
+class TestNotaCreditoConceptoService:
+    """Cálculo de totales de Nota de Crédito/Débito de "Concepto Libre"
+    (`DetNC.frm`) — ver `TotalNotaCreditoConcepto` para el bug real de
+    "SIN IVA" confirmado y corregido (2026-08-19)."""
+
+    def test_calcula_iva_solo_sobre_los_conceptos_con_iva(self, db):
+        _set_parametro(db)  # IVAINS=21%
+        conceptos = [
+            ConceptoNotaCredito(descripcion="Ajuste de precio", importe=Decimal("1000"), con_iva=True),
+            ConceptoNotaCredito(descripcion="Flete", importe=Decimal("100"), con_iva=False),
+        ]
+        total = NotaCreditoConceptoService(db).calcular_total(conceptos, civa_cliente=1)
+
+        assert total.base_gravada == Decimal("1000")
+        assert total.iva == Decimal("210")  # 1000 * 21%, NO 1100 * 21%
+        assert total.no_gravado == Decimal("100")
+        # Bug real NO replicado (ver TotalNotaCreditoConcepto): el "SIN
+        # IVA" SÍ entra al total real, no desaparece.
+        assert total.total == Decimal("1310")  # 1000 + 210 + 100
+
+    def test_cliente_no_gravado_no_calcula_iva(self, db):
+        _set_parametro(db)
+        conceptos = [ConceptoNotaCredito(descripcion="Ajuste", importe=Decimal("500"), con_iva=True)]
+        total = NotaCreditoConceptoService(db).calcular_total(conceptos, civa_cliente=4)  # Exento
+
+        assert total.iva == Decimal("0")
+        assert total.total == Decimal("500")
+
+    def test_solo_conceptos_sin_iva(self, db):
+        _set_parametro(db)
+        conceptos = [ConceptoNotaCredito(descripcion="Devolución flete", importe=Decimal("300"), con_iva=False)]
+        total = NotaCreditoConceptoService(db).calcular_total(conceptos, civa_cliente=1)
+
+        assert total.base_gravada == Decimal("0")
+        assert total.iva == Decimal("0")
+        assert total.no_gravado == Decimal("300")
+        assert total.total == Decimal("300")
+
+
+class TestEmisionNotaCreditoService:
+    """Réplica de `EmiFact.frm Sub Graba()` (rama común TipoFac 2/3) +
+    `Sub ImputaFact()` (TipoFac=2) — ver docstring de
+    `EmisionNotaCreditoService` para el alcance de Motivo confirmado con
+    el usuario (2026-08-19)."""
+
+    def _cliente(self, db, civa=1, cvta=1, deuda="1000", corr1=0):
+        cliente = Cliente(
+            CODIGO=300, NOMB="Cliente NC", PCIA="B", CVTA=cvta, CIVA=civa,
+            CUIT="20111111119", VEND=5, DEUDA=Decimal(deuda), CORR1=corr1,
+        )
+        db.add(cliente)
+        db.add(Fctabla1(CTAB="CV   ", COD=str(cvta).ljust(5), DESCRI="CONTADO", NUMSD3=15))
+        db.commit()
+        return cliente
+
+    def _factura_con_deuda(self, db, clte=300, cpbte=1, debe="1000"):
+        factura = Ctascte(
+            CLTE=clte, FECHA=date(2026, 1, 1), TIPO=1, PREFIJO=3, CPBTE=cpbte, LETRA="A",
+            IMPUT1="0 ", IMPUT2="0 ", IMPUT3="0 ", IMPUT4="0 ", IMPUT5="0 ", IMPUT6="0 ",
+            IMPTE=Decimal(debe), DEBE=Decimal(debe), FECVTO=date(2026, 1, 15),
+        )
+        db.add(factura)
+        db.commit()
+        return factura
+
+    def test_nota_de_credito_imputa_contra_factura_y_reduce_deuda(self, db):
+        _set_parametro(db)
+        cliente = self._cliente(db, deuda="1000")
+        factura = self._factura_con_deuda(db, debe="1000")
+
+        conceptos = [ConceptoNotaCredito(descripcion="Ajuste", importe=Decimal("300"), con_iva=True)]
+        total = NotaCreditoConceptoService(db).calcular_total(conceptos, civa_cliente=cliente.CIVA)  # 300+63=363
+
+        resultado = EmisionNotaCreditoService(db).emitir_concepto(
+            cliente=cliente, tipo=2, letra="A", punto_venta=4, numero_comprobante=50,
+            conceptos=conceptos, total=total, motivo=2, usuario="ana",
+            comprobante_a_imputar=factura, fecha=date(2026, 1, 20),
+        )
+
+        # Graba():2239 — DEUDA del cliente resta el total de la NC.
+        cliente_db = db.query(Cliente).filter(Cliente.CODIGO == 300).one()
+        assert cliente_db.DEUDA == Decimal("1000") - total.total
+
+        # ImputaFact():2397 — DEBE de la Factura original resta el total.
+        factura_db = db.query(Ctascte).filter(Ctascte.id == factura.id).one()
+        assert factura_db.DEBE == Decimal("1000") - total.total
+        assert factura_db.IMPUT1 == "1"  # corr = CORR1(0) + 1
+
+        # ImputaFact():2314 — la propia fila de la NC se marca con el
+        # mismo correlativo (mismo patrón que EmisionReciboService).
+        ctascte_nc = db.query(Ctascte).filter(Ctascte.id == resultado.ctascte_id).one()
+        assert ctascte_nc.TIPO == 2
+        assert ctascte_nc.IMPUT1 == "1"
+        assert ctascte_nc.DEBE == total.total
+
+        # ImputaFact():2422 — Imputacion.TIPO = 2 (no "4" como Recibo).
+        imputacion = db.query(Imputacion).filter(Imputacion.id == resultado.imputacion_id).one()
+        assert imputacion.TIPO == "2"
+        assert imputacion.CPBTEI == 1  # factura original
+        assert imputacion.IMPTE == total.total
+
+        fcivavta = db.query(FcivaVta).filter(FcivaVta.id == resultado.fcivavta_id).one()
+        assert fcivavta.TIPO == "2"
+        assert fcivavta.GRINS == total.base_gravada
+        assert fcivavta.EXENTO == total.no_gravado
+
+        totales = db.query(Totales).filter(Totales.FECHA == date(2026, 1, 20)).one()
+        assert totales.NCA == 1
+        assert totales.PVTA == -total.base_gravada  # Graba() Case 2: RESTA
+
+    def test_nota_de_credito_sin_comprobante_a_imputar_rechaza(self, db):
+        _set_parametro(db)
+        cliente = self._cliente(db)
+        conceptos = [ConceptoNotaCredito(descripcion="Ajuste", importe=Decimal("100"), con_iva=True)]
+        total = NotaCreditoConceptoService(db).calcular_total(conceptos, civa_cliente=cliente.CIVA)
+
+        with pytest.raises(ValueError):
+            EmisionNotaCreditoService(db).emitir_concepto(
+                cliente=cliente, tipo=2, letra="A", punto_venta=4, numero_comprobante=1,
+                conceptos=conceptos, total=total, motivo=2, usuario="ana",
+                comprobante_a_imputar=None,
+            )
+
+    def test_nota_de_debito_suma_a_la_deuda_sin_imputar(self, db):
+        """Graba():2244 — ND (TipoFac=3) simplemente suma a `DEUDA`, no
+        pasa por `ImputaFact()` (esa Sub sólo se llama `If TipoFac = 2`,
+        línea 2238)."""
+        _set_parametro(db)
+        cliente = self._cliente(db, deuda="1000")
+        conceptos = [ConceptoNotaCredito(descripcion="Interés", importe=Decimal("200"), con_iva=True)]
+        total = NotaCreditoConceptoService(db).calcular_total(conceptos, civa_cliente=cliente.CIVA)  # 200+42=242
+
+        resultado = EmisionNotaCreditoService(db).emitir_concepto(
+            cliente=cliente, tipo=3, letra="A", punto_venta=4, numero_comprobante=1,
+            conceptos=conceptos, total=total, motivo=1, usuario="ana",
+        )
+
+        cliente_db = db.query(Cliente).filter(Cliente.CODIGO == 300).one()
+        assert cliente_db.DEUDA == Decimal("1000") + total.total
+        assert resultado.imputacion_id is None
+
+        totales = db.query(Totales).filter(Totales.FECHA == date.today()).one()
+        assert totales.NDA == 1
+        assert totales.PVTA == total.base_gravada  # Graba() Case 3: SUMA
+
+    def test_letra_no_soportada_rechaza(self, db):
+        _set_parametro(db)
+        cliente = self._cliente(db)
+        conceptos = [ConceptoNotaCredito(descripcion="Ajuste", importe=Decimal("100"), con_iva=True)]
+        total = NotaCreditoConceptoService(db).calcular_total(conceptos, civa_cliente=cliente.CIVA)
+
+        with pytest.raises(ValueError):
+            EmisionNotaCreditoService(db).emitir_concepto(
+                cliente=cliente, tipo=3, letra="C", punto_venta=4, numero_comprobante=1,
+                conceptos=conceptos, total=total, motivo=1, usuario="ana",
+            )
 
 
 # ---------------------------------------------------------------------------

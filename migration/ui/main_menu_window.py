@@ -118,6 +118,7 @@ PCT_MDI_POR_CLASE: dict[str, tuple[float, float]] = {
     # alto del panel central") — antes 80%.
     "StockMovimientoWindow": (80, 95),
     "CobranzasZonaWindow": (90, 85),
+    "NotaCreditoConceptoWindow": (80, 85),
     "TotalesDiariosWindow": (85, 88),
     "ChequesConsultaWindow": (75, 88),
     "VentasSeccionWindow": (80, 88),
@@ -659,16 +660,20 @@ class MainMenuWindow(QMainWindow):
                 ("articulos", "Artículos", self._abrir_articulos),
                 ("tablas", "Tablas Varias", self._abrir_tablas),
             ],
-            # Nombres pedidos por el usuario (2026-08-17): N.Credito/
-            # N.Debito/Cotización/Remito quedan deshabilitados
-            # ("Próximamente", `callback=None`, mismo patrón que
-            # "Constancia AFIP" en Varios) porque todavía no existen —
-            # alcance confirmado en `FacturadorWindow` ("sólo Factura...
-            # NC/ND/Remito/Cotización quedan para una fase posterior").
+            # N.Credito/N.Debito habilitados (2026-08-19) — alcance
+            # "Concepto Libre" (`NotaCreditoConceptoWindow`, Motivo != 1/
+            # "DEV.MERC."); la variante "Devolución de Mercadería" (grilla
+            # de artículos + reversa de Stock) todavía no está migrada,
+            # queda para una ronda posterior. Cotización/Remito siguen
+            # deshabilitados ("Próximamente", `callback=None`, mismo
+            # patrón que "Constancia AFIP" en Varios) — Remito no existe
+            # en el legacy (confirmado, sin `.frm` propio); Cotización es
+            # un tipo de comprobante del Facturador (TipoFac=4, sin CAE),
+            # no la Cotización del Dólar ya migrada.
             "Ingreso": [
                 ("factura", "Factura", self._abrir_factura),
-                ("ncredito", "N.Credito", None),
-                ("ndebito", "N.Debito", None),
+                ("ncredito", "N.Credito", self._abrir_nota_credito),
+                ("ndebito", "N.Debito", self._abrir_nota_debito),
                 ("cotizacion_venta", "Cotización", None),
                 ("remito", "Remito", None),
                 ("recibo", "Recibos", self._abrir_recibo),
@@ -954,6 +959,16 @@ class MainMenuWindow(QMainWindow):
         from .recibo_window import ReciboWindow
 
         self._mostrar(ReciboWindow())
+
+    def _abrir_nota_credito(self) -> None:
+        from .nota_credito_concepto_window import TIPO_NC, NotaCreditoConceptoWindow
+
+        self._mostrar(NotaCreditoConceptoWindow(tipo_inicial=TIPO_NC))
+
+    def _abrir_nota_debito(self) -> None:
+        from .nota_credito_concepto_window import TIPO_ND, NotaCreditoConceptoWindow
+
+        self._mostrar(NotaCreditoConceptoWindow(tipo_inicial=TIPO_ND))
 
     def _abrir_stock_movimiento(self) -> None:
         from .stock_movimiento_window import StockMovimientoWindow

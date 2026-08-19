@@ -447,9 +447,13 @@ class CuentaCorrienteService:
 
     # TIPO de comprobante que genera Imputacion.TIPO — literal fijo "4"
     # (recibo) / "6" (descuento por pronto pago), texto en Imputacion aunque
-    # numérico en Ctasctes (EmiRec.frm:1119 y :1140).
+    # numérico en Ctasctes (EmiRec.frm:1119 y :1140). "2" (Nota de Crédito)
+    # agregado para `EmisionNotaCreditoService` — réplica de `EmiFact.frm
+    # Sub ImputaFact()` línea 2422 (`RgCCTE!TIPO = 2`), mismo mecanismo de
+    # slots que el Recibo, sólo cambia el literal grabado en Imputacion.TIPO.
     TIPO_IMPUTACION_RECIBO = "4"
     TIPO_IMPUTACION_DESCUENTO = "6"
+    TIPO_IMPUTACION_NOTA_CREDITO = "2"
 
     def imputar_pago(
         self,
@@ -462,31 +466,41 @@ class CuentaCorrienteService:
         fecha: Optional[date] = None,
         descuento: Decimal = Decimal("0"),
         commit: bool = True,
+        tipo_imputacion: str = TIPO_IMPUTACION_RECIBO,
     ) -> ImputacionResultado:
-        """Aplica un pago parcial/total a un comprobante (factura/ND) de CtasCtes
-        y deja el registro histórico en Imputacion — flujo completo end-to-end.
+        """Aplica un pago/crédito parcial o total a un comprobante
+        (factura/ND) de CtasCtes y deja el registro histórico en
+        Imputacion — flujo completo end-to-end.
 
-        Replica EmiRec.frm:1038-1157:
+        Replica EmiRec.frm:1038-1157 (Recibo, `tipo_imputacion` default
+        "4") y, con `tipo_imputacion=TIPO_IMPUTACION_NOTA_CREDITO`,
+        `EmiFact.frm Sub ImputaFact()` líneas 2351-2437 (Nota de
+        Crédito) — mismo mecanismo exacto de slots IMPUT1-6 y de
+        actualización de DEBE en ambos casos, sólo cambia qué literal se
+        graba en `Imputacion.TIPO` y de dónde sale `cpbte_recibo`/`corr`
+        (el propio comprobante que se está emitiendo, no un Recibo):
           1. Busca el primer slot libre entre IMPUT1..IMPUT6 (vacío en VB6
              era "  "/"00"/"0 "; acá se trata None/"" como libre).
-          2. Le asigna el correlativo `corr` del recibo (Clientes.CORR1,
-             ciclo 1-99, gestionado fuera de este método).
+          2. Le asigna el correlativo `corr` del comprobante que imputa
+             (Clientes.CORR1, ciclo 1-99, gestionado fuera de este método).
           3. Actualiza DEBE: resta el importe aplicado, salvo TIPO en
              TIPOS_QUE_SUMAN_AL_DEBE (NC/Pago a Cta/NC Interés) que suma.
-          4. Inserta un registro en Imputacion (TIPO="4") con la referencia
-             al comprobante original (TIPOI/CPBTEI/FECHAI/FECVTOI).
-          5. Si `descuento` > 0, inserta un segundo registro (TIPO="6").
+          4. Inserta un registro en Imputacion (TIPO=`tipo_imputacion`) con
+             la referencia al comprobante original (TIPOI/CPBTEI/FECHAI/
+             FECVTOI).
+          5. Si `descuento` > 0, inserta un segundo registro (TIPO="6") —
+             sólo aplica al camino de Recibo, la NC nunca pasa `descuento`.
 
         Lanza ValueError si ya no quedan slots libres (7ma aplicación
         parcial), caso que el VB6 tampoco maneja explícitamente.
 
-        `commit=False` (usado por `EmisionReciboService`, que llama esto
-        una vez por cada comprobante aplicado dentro de UNA sola
-        transacción de Recibo): deja los cambios sólo en la sesión —
+        `commit=False` (usado por `EmisionReciboService`/
+        `EmisionNotaCreditoService`, que llaman esto dentro de UNA sola
+        transacción propia): deja los cambios sólo en la sesión —
         `flush()` para que `Imputacion.id` quede disponible, sin
         confirmar — y el llamador hace un único `commit()`/`rollback()`
-        al final de todo el Recibo. Con el default `commit=True` el
-        método es atómico por sí solo, igual que antes.
+        al final. Con el default `commit=True` el método es atómico por
+        sí solo, igual que antes.
         """
         importe_aplicado = Decimal(importe_aplicado)
         descuento = Decimal(descuento)
@@ -528,7 +542,7 @@ class CuentaCorrienteService:
         registro = Imputacion(
             CLTE=clte,
             FECHA=fecha,
-            TIPO=self.TIPO_IMPUTACION_RECIBO,
+            TIPO=tipo_imputacion,
             CPBTE=cpbte_recibo,
             IMPTE=importe_aplicado,
             TIPOI=str(comprobante.TIPO),
@@ -1584,6 +1598,299 @@ class EmisionFacturaService:
 
         totales.FACTUAL = fecha
         totales.USUARIO = usuario6
+        return totales
+
+
+# ---------------------------------------------------------------------------
+# EmisionNotaCreditoService — Nota de Crédito / Débito de "Concepto Libre"
+# ---------------------------------------------------------------------------
+
+
+def _dias_vencimiento_cond_venta(repos: RepositoryFactory, cvta: Optional[int]) -> int:
+    """Días de la Cond. de Venta de un cliente (`Fctabla1` CTAB='CV',
+    `NUMSD3`) — réplica de `EmiFact.frm Graba()` líneas 2274-2285. 30
+    días si no se encuentra la Cond. de Venta (mismo default del
+    legacy). Función compartida por `EmisionFacturaService`/
+    `EmisionNotaCreditoService` (misma fórmula, cualquier tipo de
+    comprobante que grabe en Ctasctes la necesita)."""
+    if cvta is None:
+        return 30
+    entrada = repos.fctablas().by_ctab_cod("CV", str(cvta))
+    if entrada is None or entrada.NUMSD3 is None:
+        return 30
+    return int(entrada.NUMSD3)
+
+
+@dataclass
+class ConceptoNotaCredito:
+    """Un renglón de `DetNC.frm` (hasta 3 por comprobante, alcance
+    "Concepto Libre" — Motivo distinto de 1/"DEV.MERC.", ver docstring
+    de `EmisionNotaCreditoService`): descripción libre + importe + si
+    ese importe está gravado por IVA (`Check1` de `DetNC.frm`, "CON IVA"/
+    "SIN IVA")."""
+
+    descripcion: str
+    importe: Decimal
+    con_iva: bool = True
+
+
+@dataclass
+class TotalNotaCreditoConcepto:
+    """Desglose de una Nota de Crédito/Débito de "Concepto Libre".
+
+    **Bug real encontrado y NO replicado** (`EmiFact.frm Sub
+    ConectaAFIP()`, línea ~2644): el legacy arma el total que se PIDE a
+    AFIP y se GRABA en Ctasctes/FCIVAVta como `TotBruto + TotIVAIns +
+    ValIB` — sin sumar `TotSIVA` (el acumulado de las líneas "SIN IVA",
+    `Check1.Value=0` en `DetNC.frm`) — pese a que el total que se
+    MUESTRA e IMPRIME al operador sí lo incluye (`TOTNETO = TotBruto +
+    TotIVAIns + TotIVANI + TotSIVA + ValIB`, líneas 1181/1669). Un
+    importe "SIN IVA" cargado por el operador desaparecía
+    silenciosamente del CAE pedido y de lo grabado. Decisión confirmada
+    con el usuario (2026-08-19): acá SÍ se incluye, como importe no
+    gravado — viaja a AFIP como `ImpTotConc` (`AfipWSFEv1Cliente.
+    solicitar_cae`, hardcodeado en "0.00" en el legacy, línea 2635)."""
+
+    base_gravada: Decimal  # suma de los conceptos "CON IVA" (antes de IVA)
+    iva: Decimal
+    no_gravado: Decimal  # suma de los conceptos "SIN IVA" (antes se perdía, ver arriba)
+    total: Decimal
+
+
+class NotaCreditoConceptoService:
+    """Cálculo de totales de una Nota de Crédito/Débito de "Concepto
+    Libre" (hasta 3 renglones de texto libre + importe, `DetNC.frm`) —
+    equivalente conceptual a `FacturaService.calcular_total()` pero sin
+    grilla de artículos ni bonificación en cascada (`DetNC.frm` no las
+    tiene). Reusa la misma alícuota/gate de IVA que Factura (misma
+    fuente `Parametro.IVAINS`/`Cliente.CIVA`, `FacturaService.
+    CIVA_GRAVADO_MAX`)."""
+
+    def __init__(self, db: Session):
+        self.db = db
+        self.factura_service = FacturaService(db)
+
+    def calcular_total(self, conceptos: list[ConceptoNotaCredito], civa_cliente: int) -> TotalNotaCreditoConcepto:
+        base_gravada = sum((c.importe for c in conceptos if c.con_iva), Decimal("0"))
+        no_gravado = sum((c.importe for c in conceptos if not c.con_iva), Decimal("0"))
+
+        gravado = civa_cliente < FacturaService.CIVA_GRAVADO_MAX
+        iva = Decimal("0")
+        if gravado and base_gravada > 0:
+            iva = _round2(base_gravada * self.factura_service.alicuota_iva_inscripto())
+
+        total = _round2(base_gravada) + iva + _round2(no_gravado)
+        return TotalNotaCreditoConcepto(
+            base_gravada=_round2(base_gravada), iva=iva, no_gravado=_round2(no_gravado), total=total
+        )
+
+
+@dataclass
+class ResultadoEmisionNotaCredito:
+    fcivavta_id: int
+    ctascte_id: int
+    totales_id: int
+    imputacion_id: Optional[int]
+    total: Decimal
+
+
+class EmisionNotaCreditoService:
+    """Persistencia atómica de una Nota de Crédito/Débito de "Concepto
+    Libre" — equivalente a `EmiFact.frm Sub Graba()`, rama TipoFac 2/3
+    con Motivo distinto de 1 ("DEV.MERC.", que usa la grilla de
+    artículos y reversa Stock — pantalla aparte, "Nota de Crédito —
+    Devolución de Mercadería", fuera del alcance de ESTE servicio).
+
+    **Alcance de Motivo confirmado con el usuario (2026-08-19)**, fuente
+    real `CabFact.frm Sub Combo5_Click` (líneas 726-746): `Motivo = 1`
+    ("DEV.MERC.", único código real hoy con ese valor, confirmado contra
+    `Fctabla1` real) muestra `DetFact.Show` (grilla de artículos);
+    cualquier otro Motivo muestra `DetNC.Show` (lo que persiste ESTE
+    servicio).
+
+    Réplica de `Graba()` (líneas 2166-2318, rama común a TipoFac 2/3) +
+    `Sub ImputaFact()` (líneas 2351-2437, sólo TipoFac=2): arma FcivaVta/
+    Ctascte/Totales igual que Factura pero con TIPO=2 (NC) o 3 (ND), y
+    si es NC (TIPO=2) imputa el importe contra un comprobante con deuda
+    real elegido por el operador (`CuentaCorrienteService.imputar_pago`,
+    `tipo_imputacion="2"`) — reusa el MISMO mecanismo de slots IMPUT1-6
+    ya usado por Recibo, no una implementación paralela.
+
+    **Nota de Débito NO imputa contra nada**: el legacy sólo llama
+    `ImputaFact()` `If TipoFac = 2` (línea 2238) — la ND simplemente suma
+    a la deuda del cliente igual que una Factura (`Graba()` línea 2244:
+    `Else RgCLTE!DEUDA = RgCLTE!DEUDA + TOTNETO`). `comprobante_a_
+    imputar` es obligatorio para NC y se ignora (debe venir `None`) para
+    ND.
+
+    **Sólo Letra A/B** — mismo alcance ya confirmado para Factura
+    (`EmisionFacturaService`); Letra "C" (Consumidor Final papel) queda
+    fuera, `FacturaService.letra_comprobante()` nunca la devuelve."""
+
+    TIPO_NC = 2
+    TIPO_ND = 3
+    LETRAS_SOPORTADAS = ("A", "B")
+
+    def __init__(self, db: Session):
+        self.db = db
+        self.repos = RepositoryFactory(db)
+        self.cuentas = CuentaCorrienteService(db)
+
+    def emitir_concepto(
+        self,
+        cliente: Cliente,
+        tipo: int,
+        letra: str,
+        punto_venta: int,
+        numero_comprobante: int,
+        conceptos: list[ConceptoNotaCredito],
+        total: TotalNotaCreditoConcepto,
+        motivo: int,
+        usuario: str,
+        comprobante_a_imputar: Optional[Ctascte] = None,
+        fecha: Optional[date] = None,
+    ) -> ResultadoEmisionNotaCredito:
+        if tipo not in (self.TIPO_NC, self.TIPO_ND):
+            raise ValueError(f"Tipo {tipo!r} no soportado — sólo Nota de Crédito (2) o Débito (3).")
+        if letra not in self.LETRAS_SOPORTADAS:
+            raise ValueError(f"Letra '{letra}' no soportada — el alcance actual es sólo A/B.")
+        if tipo == self.TIPO_NC and comprobante_a_imputar is None:
+            raise ValueError("La Nota de Crédito necesita un comprobante contra el cual imputarse.")
+        if not conceptos:
+            raise ValueError("La Nota no tiene conceptos cargados.")
+
+        fecha = fecha or date.today()
+        usuario6 = (usuario or "")[:6]
+
+        try:
+            fcivavta = FcivaVta(
+                FECHA=fecha,
+                PTOVTA=punto_venta,
+                CPBTE=numero_comprobante,
+                LETRA=letra,
+                TIPO=str(tipo),
+                CLTE=cliente.CODIGO,
+                NOMB=cliente.NOMB,
+                PCIA=cliente.PCIA,
+                CVTA=str(cliente.CVTA) if cliente.CVTA is not None else None,
+                MOTI=str(motivo),
+                CIVA=str(cliente.CIVA) if cliente.CIVA is not None else None,
+                CUIT=(cliente.CUIT or "")[:14],
+                VEND=cliente.VEND,
+                ZONA=0,
+                TOTCAN=0,
+                GRINS=total.base_gravada,
+                GRNOINS=Decimal("0"),
+                IVAINS=total.iva,
+                IVANOINS=Decimal("0"),
+                PORCIB=Decimal("0"),
+                TOTIB=Decimal("0"),
+                # `EXENTO` es el campo real más cercano a "importe no
+                # gravado" que tiene el esquema — mismo destino que el
+                # `ImpTotConc` que se manda a AFIP (ver
+                # `TotalNotaCreditoConcepto`).
+                EXENTO=total.no_gravado,
+                TOTCOS=Decimal("0"),
+                ITEMS=len(conceptos),
+                BON=Decimal("0"),
+                NOIMPR="0",
+                COMIS=Decimal("0"),
+            )
+            self.db.add(fcivavta)
+
+            dias_vto = _dias_vencimiento_cond_venta(self.repos, cliente.CVTA)
+            corr = self.repos.cliente().proximo_correlativo(cliente)
+            ctascte = Ctascte(
+                CLTE=cliente.CODIGO,
+                FECHA=fecha,
+                TIPO=tipo,
+                PREFIJO=punto_venta,
+                CPBTE=numero_comprobante,
+                LETRA=letra,
+                IMPUT1="0 ", IMPUT2="0 ", IMPUT3="0 ", IMPUT4="0 ", IMPUT5="0 ", IMPUT6="0 ",
+                IMPTE=total.total,
+                DEBE=total.total,
+                CVTA=str(cliente.CVTA) if cliente.CVTA is not None else None,
+                BON=Decimal("0"),
+                TIPO9="0",
+                MOTI=str(motivo),
+                FECVTO=fecha + timedelta(days=dias_vto),
+                USUAR=usuario6,
+            )
+            self.db.add(ctascte)
+
+            imputacion_id: Optional[int] = None
+            if tipo == self.TIPO_NC:
+                # Réplica de Graba() línea 2314 (`RgCCTE!imput1 = Corr`):
+                # la propia fila recién creada se marca a sí misma con su
+                # correlativo — mismo patrón de doble marca ya usado en
+                # `EmisionReciboService` para la fila del propio Recibo.
+                ctascte.IMPUT1 = str(corr)
+                cliente.DEUDA = (cliente.DEUDA or Decimal("0")) - total.total
+                resultado_imputacion = self.cuentas.imputar_pago(
+                    comprobante=comprobante_a_imputar,
+                    importe_aplicado=total.total,
+                    corr=corr,
+                    cpbte_recibo=numero_comprobante,
+                    usuario=usuario6,
+                    clte=cliente.CODIGO,
+                    fecha=fecha,
+                    commit=False,
+                    tipo_imputacion=CuentaCorrienteService.TIPO_IMPUTACION_NOTA_CREDITO,
+                )
+                imputacion_id = resultado_imputacion.imputacion_id
+            else:
+                cliente.DEUDA = (cliente.DEUDA or Decimal("0")) + total.total
+
+            cliente.USUARIO = usuario6
+            cliente.FACTUAL = fecha
+
+            totales = self._upsert_totales(fecha, tipo, letra, total)
+
+            self.db.commit()
+        except Exception:
+            self.db.rollback()
+            raise
+
+        self.db.refresh(fcivavta)
+        self.db.refresh(ctascte)
+        self.db.refresh(totales)
+        return ResultadoEmisionNotaCredito(
+            fcivavta_id=fcivavta.id, ctascte_id=ctascte.id, totales_id=totales.id,
+            imputacion_id=imputacion_id, total=total.total,
+        )
+
+    def _upsert_totales(self, fecha: date, tipo: int, letra: str, total: TotalNotaCreditoConcepto) -> Totales:
+        """Réplica de `Graba()` Case 2 (NC, RESTA) / Case 3 (ND, SUMA),
+        líneas 2126-2158. `TotBruto` ahí es sólo la base gravada ("CON
+        IVA") — igual criterio acá (`total.base_gravada`): es un campo
+        de reporte de ventas gravadas, no el importe realmente cobrado/
+        acreditado (que sí incluye `no_gravado`, ver `TotalNotaCredito
+        Concepto`). Sin `TotCan` real en el modo "Concepto Libre" (no
+        hay cantidades, sólo importes) — `UNIDA/UNIDB` no se tocan,
+        a diferencia de Factura."""
+        totales = self.repos.totales().by_fecha(fecha)
+        if totales is None:
+            totales = Totales(FECHA=fecha)
+            self.db.add(totales)
+
+        def _sumar(campo: str, delta) -> None:
+            actual = getattr(totales, campo) or 0
+            setattr(totales, campo, actual + delta)
+
+        signo = -1 if tipo == self.TIPO_NC else 1
+        _sumar("PVTA", signo * total.base_gravada)
+        _sumar("PESP", signo * total.base_gravada)
+        campo_contador = {
+            ("A", self.TIPO_NC): "NCA", ("B", self.TIPO_NC): "NCB",
+            ("A", self.TIPO_ND): "NDA", ("B", self.TIPO_ND): "NDB",
+        }.get((letra, tipo))
+        if campo_contador:
+            _sumar(campo_contador, 1)
+        campo_pesp = "PESPA" if letra == "A" else "PESPB"
+        _sumar(campo_pesp, signo * total.base_gravada)
+
+        totales.FACTUAL = fecha
         return totales
 
 
