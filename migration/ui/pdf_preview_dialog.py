@@ -18,6 +18,12 @@ Zoom −/+ / Ajustar Ancho e "Imprimir..." (abre el diálogo nativo de
 impresión de Windows, que ya deja elegir Todas/Selección/Rango de
 páginas — no hace falta reinventar ese selector).
 
+**Guardar como...** (feedback del usuario, 2026-08-19, pedido para el
+"Imprimir" de un comprobante ya emitido: "permita al operador guardar o
+imprimir") — copia el PDF ya generado a la carpeta/nombre que el
+operador elija (`QFileDialog.getSaveFileName` + copia de archivo, el
+PDF de origen siempre queda intacto en `migration/pdf_output/`).
+
 Usa `QPdfView`/`QPdfDocument` (`PyQt6.QtPdfWidgets`/`PyQt6.QtPdf`, ya
 incluidos en la instalación de PyQt6 del proyecto) — sin depender de un
 visor externo del sistema operativo.
@@ -25,6 +31,7 @@ visor externo del sistema operativo.
 
 from __future__ import annotations
 
+import shutil
 from pathlib import Path
 
 from PyQt6.QtCore import QSize, Qt, QTimer
@@ -32,7 +39,7 @@ from PyQt6.QtGui import QPainter
 from PyQt6.QtPdf import QPdfDocument
 from PyQt6.QtPdfWidgets import QPdfView
 from PyQt6.QtPrintSupport import QPrintDialog, QPrinter
-from PyQt6.QtWidgets import QDialog, QHBoxLayout, QLabel, QPushButton, QVBoxLayout, QWidget
+from PyQt6.QtWidgets import QDialog, QFileDialog, QHBoxLayout, QLabel, QMessageBox, QPushButton, QVBoxLayout, QWidget
 
 # Pasos de zoom fijos (feedback del usuario: "aumentar o disminuir
 # zoom") — más simple y predecible que un cálculo continuo por
@@ -54,6 +61,7 @@ class PdfPreviewDialog(QDialog):
         self.setWindowTitle(titulo)
         self.resize(720, 900)
         self.grabar = False
+        self._ruta_pdf = Path(ruta_pdf)
 
         layout = QVBoxLayout(self)
 
@@ -127,6 +135,15 @@ class PdfPreviewDialog(QDialog):
 
         fila.addStretch()
 
+        # "Guardar como..." (pedido del usuario, 2026-08-19: "permita al
+        # operador guardar o imprimir") — el PDF ya queda escrito en
+        # disco (`migration/pdf_output/`) apenas se genera, esto es sólo
+        # para dejarle al operador elegir OTRA carpeta/nombre a mano
+        # (ej. guardarlo en el escritorio para mandarlo por mail).
+        btn_guardar = QPushButton("Guardar como...")
+        btn_guardar.clicked.connect(self._on_guardar_como)
+        fila.addWidget(btn_guardar)
+
         # "Poder imprimir 1, varias o todas las páginas" — el diálogo
         # nativo de impresión (`QPrintDialog`, con `PrintPageRange`
         # habilitado) ya deja elegir Todas / Página actual / Rango, no
@@ -136,6 +153,17 @@ class PdfPreviewDialog(QDialog):
         fila.addWidget(btn_imprimir)
 
         return fila
+
+    def _on_guardar_como(self) -> None:
+        destino, _filtro = QFileDialog.getSaveFileName(
+            self, "Guardar PDF como...", self._ruta_pdf.name, "PDF (*.pdf)"
+        )
+        if not destino:
+            return
+        try:
+            shutil.copyfile(self._ruta_pdf, destino)
+        except OSError as exc:
+            QMessageBox.critical(self, "Guardar como...", f"No se pudo guardar el PDF:\n{exc}")
 
     def _on_zoom_mas(self) -> None:
         self._vista.setZoomMode(QPdfView.ZoomMode.Custom)

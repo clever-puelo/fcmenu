@@ -18,7 +18,7 @@ electrónico.
 
 from __future__ import annotations
 
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from datetime import date
 from decimal import Decimal
 from pathlib import Path
@@ -76,6 +76,12 @@ class DatosFacturaPDF:
     cliente_domicilio: str
     renglones: list[RenglonEmision]
     total: TotalFactura
+    # Texto "%Descuento" por renglón (mismo orden que `renglones`, ver
+    # `FacturadorWindow._descuentos_por_renglon`) — réplica de la
+    # columna "% Descuento" que arma `EmiFact.frm` (líneas 1044-1052)
+    # concatenando `DtoXClte.DTO1..DTO5` con "+" (ej. "10+5"). Lista
+    # vacía (default) para quien todavía no la calcula.
+    descuentos_renglones: list[str] = field(default_factory=list)
     cae: Optional[str] = None
     cae_vencimiento: Optional[date] = None
     qr_url: Optional[str] = None
@@ -142,32 +148,49 @@ def generar_pdf_factura(datos: DatosFacturaPDF, directorio_salida: Optional[Path
     c.line(margen, y, ancho - margen, y)
 
     # --- Tabla de renglones ---------------------------------------------
+    # Réplica fiel de `EmiFact.frm` (líneas 887-892, "Ttulo" de FG1 en el
+    # impreso): Cant. | Detalle | % Descuento | Precio Unit. | Importe —
+    # SIN columna de Código propia (el legacy nunca la imprime aparte,
+    # el Código sólo se usa en pantalla) y con el Despacho pegado al
+    # final del Detalle (líneas 1054-1061), no en columna aparte
+    # (pedido del usuario, 2026-08-19: "El detalle lleva el despacho").
+    # Encabezados alineados al mismo punto que sus valores (pedido del
+    # usuario: "acomodar columna de valores" — antes los títulos se
+    # dibujaban a la izquierda mientras los importes de abajo quedaban
+    # alineados a la derecha, un desfasaje visual real).
     y -= 14
-    columnas = [
-        (margen, "Código"),
-        (margen + 45 * mm, "Descripción"),
-        (margen + 115 * mm, "Cantidad"),
-        (margen + 140 * mm, "Precio Unit."),
-        (margen + 168 * mm, "Importe"),
-    ]
+    x_cant_d = margen + 20 * mm  # ancla derecha
+    x_detalle_i = margen + 22 * mm  # ancla izquierda
+    x_desc_d = margen + 126 * mm
+    x_precio_d = margen + 150 * mm
+    x_importe_d = margen + 180 * mm
+
     c.setFont("Helvetica-Bold", 8)
-    for x, titulo in columnas:
-        c.drawString(x, y, titulo)
+    c.drawRightString(x_cant_d, y, "Cant.")
+    c.drawString(x_detalle_i, y, "Detalle")
+    c.drawRightString(x_desc_d, y, "%Descuento")
+    c.drawRightString(x_precio_d, y, "Precio Unit.")
+    c.drawRightString(x_importe_d, y, "Importe")
     y -= 4
     c.line(margen, y, ancho - margen, y)
 
     c.setFont("Helvetica", 8)
-    for renglon in datos.renglones:
+    descuentos_renglones = datos.descuentos_renglones or []
+    for indice, renglon in enumerate(datos.renglones):
         y -= 12
         if y < 70 * mm:  # deja lugar para totales + CAE/QR — 25 renglones reales entran cómodos
             break
         cantidad = renglon.cantidad_unidades if renglon.cantidad_unidades > 0 else renglon.mtr
-        cod = f"{renglon.cod1}/{renglon.cod2}" if renglon.cod2 else renglon.cod1
-        c.drawString(columnas[0][0], y, cod[:18])
-        c.drawString(columnas[1][0], y, renglon.descripcion[:38])
-        c.drawRightString(columnas[2][0] + 18 * mm, y, format_decimal(cantidad))
-        c.drawRightString(columnas[3][0] + 22 * mm, y, format_decimal(renglon.precio_unitario))
-        c.drawRightString(columnas[4][0] + 22 * mm, y, format_decimal(renglon.importe))
+        detalle = renglon.descripcion.strip()
+        if renglon.nrodesp_elegido:
+            detalle = f"{detalle} — Desp. {renglon.nrodesp_elegido}"
+        desc_texto = descuentos_renglones[indice] if indice < len(descuentos_renglones) else ""
+
+        c.drawRightString(x_cant_d, y, format_decimal(cantidad))
+        c.drawString(x_detalle_i, y, detalle[:46])
+        c.drawRightString(x_desc_d, y, desc_texto)
+        c.drawRightString(x_precio_d, y, format_decimal(renglon.precio_unitario))
+        c.drawRightString(x_importe_d, y, format_decimal(renglon.importe))
 
     y -= 10
     c.line(margen, y, ancho - margen, y)

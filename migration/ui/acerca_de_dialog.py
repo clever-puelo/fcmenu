@@ -102,7 +102,7 @@ class AcercaDeDialog(QDialog):
 
         lbl_titulo = QLabel("FcMenu II")
         lbl_titulo.setStyleSheet(
-            f"color: {Verde.BLANCO}; font-family: 'Times New Roman'; font-size: 30pt; font-weight: bold;"
+            f"color: {Verde.BLANCO}; font-family: 'Arial Black'; font-size: 30pt; font-weight: bold;"
         )
         lbl_titulo.setAlignment(Qt.AlignmentFlag.AlignCenter)
         layout.addWidget(lbl_titulo)

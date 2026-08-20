@@ -432,22 +432,48 @@ class DespachoRepository(BaseRepository[Despacho]):
         cantidad de artículos que tiene cada uno — réplica de
         `VerDesp.frm Sub CargaDespa` (`GROUP BY NRODESP, FECENT`), orden
         real por fecha descendente (`FG2.Sort = flexSortGenericDescending`
-        sobre la columna Fecha)."""
+        sobre la columna Fecha).
+
+        `cpbte` (pedido del usuario, 2026-08-19: "agregar comprobante
+        despues del despacho") — el Nº de comprobante de ENTRADA de ese
+        lote (`Despachos.CPBTE`), en teoría constante para todas las
+        filas de un mismo NRODESP+FECENT (mismo lote de importación);
+        `func.max()` por si algún caso real no lo fuera, para no romper
+        el `GROUP BY` con una columna no agregada."""
         filas = (
-            self.db.query(Despacho.NRODESP, Despacho.FECENT, func.count(Despacho.id))
+            self.db.query(Despacho.NRODESP, Despacho.FECENT, func.count(Despacho.id), func.max(Despacho.CPBTE))
             .group_by(Despacho.NRODESP, Despacho.FECENT)
             .order_by(Despacho.FECENT.desc())
             .all()
         )
-        return [{"nrodesp": nrodesp, "fecent": fecent, "cantidad": cantidad} for nrodesp, fecent, cantidad in filas]
+        return [
+            {"nrodesp": nrodesp, "fecent": fecent, "cantidad": cantidad, "cpbte": cpbte}
+            for nrodesp, fecent, cantidad, cpbte in filas
+        ]
 
-    def articulos_de_lote(self, nrodesp: str) -> List[Despacho]:
+    def articulos_de_lote(self, nrodesp: str, fecent: Optional[date] = None) -> List[Despacho]:
         """Todos los renglones (uno por artículo) de un lote/despacho
         puntual — réplica de `VerDesp.frm Sub DoVer` (`WHERE NRODESP = ...`,
-        sin filtrar por artículo)."""
+        sin filtrar por artículo).
+
+        **Bug real encontrado con datos reales** (2026-08-19, "22001IC05005447M
+        dice que tiene 2 artículos y al desplegar muestra más de 15
+        renglones"): un mismo `NRODESP` puede repetirse en fechas de
+        entrada DISTINTAS (confirmado contra `fcmenu_dev`: ese lote tiene
+        27 filas el 17/03/2022 y 2 más el 05/01/2023 — 29 en total bajo
+        el mismo número) — `resumen_lotes()` ya agrupa por NRODESP+FECENT
+        (son lotes de importación distintos que reusan el número), pero
+        antes acá se filtraba sólo por NRODESP: al abrir CUALQUIERA de
+        los 2 renglones del resumen se traían las 29 filas juntas, sin
+        importar cuál se clickeó. `fecent` (opcional sólo para no romper
+        el único caller de antes de este fix) ahora filtra también por
+        la fecha exacta del renglón del resumen elegido."""
+        filtros = [Despacho.NRODESP == nrodesp]
+        if fecent is not None:
+            filtros.append(Despacho.FECENT == fecent)
         return (
             self.db.query(Despacho)
-            .filter(Despacho.NRODESP == nrodesp)
+            .filter(*filtros)
             .order_by(Despacho.COD1.asc(), Despacho.COD2.asc())
             .all()
         )
@@ -882,12 +908,25 @@ class FcivaVtaRepository(BaseRepository[FcivaVta]):
     def by_comprobante(
         self, tipo: str, letra: str, ptovta: int, cpbte: int
     ) -> Optional[FcivaVta]:
-        """Busca factura por tipo, letra, punto de venta y comprobante."""
+        """Busca factura por tipo, letra, punto de venta y comprobante.
+
+        **Bug real encontrado y corregido** (2026-08-19, "desde Cuentas
+        Corrientes no funciona el click para ver la factura"):
+        `FcivaVta.TIPO` viene de `fcmenu_dev` real con el padding fijo de
+        Access (`'1 '`, no `'1'` — confirmado contra datos reales), a
+        diferencia de `Ctascte.TIPO`/`Fcestad1.TIPO` (`Integer`, sin este
+        problema) — el `==` exacto contra el `str(tipo)` limpio que arma
+        `CtaCteWindow._on_click_fila_extracto` nunca encontraba nada,
+        `by_comprobante` devolvía `None` en silencio y el clic no hacía
+        nada visible. `func.trim()` en TIPO/LETRA, mismo patrón ya usado
+        en `Fctabla1.CTAB`/`Articulo.COD1-2`/`Parametro.CLAVE` (4ª vez
+        que este bug de padding aparece en una columna de texto migrada
+        desde Access)."""
         return (
             self.db.query(FcivaVta)
             .filter(
-                (FcivaVta.TIPO == tipo)
-                & (FcivaVta.LETRA == letra)
+                (func.trim(FcivaVta.TIPO) == tipo.strip())
+                & (func.trim(FcivaVta.LETRA) == letra.strip())
                 & (FcivaVta.PTOVTA == ptovta)
                 & (FcivaVta.CPBTE == cpbte)
             )

@@ -97,6 +97,35 @@ class TestGenerarPdfFactura:
         assert ruta.exists()
         assert ruta.read_bytes()[:4] == b"%PDF"
 
+    def test_detalle_lleva_el_despacho_pegado_a_la_descripcion(self, tmp_path):
+        """Réplica de EmiFact.frm:1054-1061 — el Despacho no es una
+        columna aparte, va pegado al final del texto de Detalle
+        (feedback del usuario, 2026-08-19: "El detalle lleva el
+        despacho")."""
+        datos = _datos_factura(
+            renglones=[
+                RenglonEmision(
+                    cod1="AA", cod2="1", descripcion="ARTICULO CON LOTE",
+                    precio_unitario=Decimal("100"), importe=Decimal("1000"),
+                    cantidad_unidades=Decimal("10"), nrodesp_elegido="25001IC04066997X",
+                )
+            ],
+        )
+        ruta = generar_pdf_factura(datos, directorio_salida=tmp_path)
+        texto = PdfReader(str(ruta)).pages[0].extract_text()
+        assert "ARTICULO CON LOTE" in texto
+        assert "25001IC04066997X" in texto
+
+    def test_columna_de_descuento_por_renglon(self, tmp_path):
+        """Réplica de la columna "% Descuento" de EmiFact.frm — texto
+        libre por renglón (ej. "10+5"), en el mismo orden que
+        `renglones` (ver `FacturadorWindow._descuentos_por_renglon`)."""
+        datos = _datos_factura(descuentos_renglones=["10+5"])
+        ruta = generar_pdf_factura(datos, directorio_salida=tmp_path)
+        texto = PdfReader(str(ruta)).pages[0].extract_text()
+        assert "10+5" in texto
+        assert "%Descuento" in texto or "% Descuento" in texto.replace("\n", " ")
+
     def test_qr_url_se_incluye_como_grafico_no_como_texto(self, tmp_path):
         """El QR se dibuja como gráfico vectorial (QrCodeWidget), no
         aparece como texto plano en el PDF — sólo se confirma que el PDF

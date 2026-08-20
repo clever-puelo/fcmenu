@@ -337,6 +337,47 @@ def test_despacho_by_nrodesp(db):
     assert encontrado.STOCK == Decimal("5")
 
 
+def test_despacho_resumen_lotes_agrupa_por_nrodesp_y_fecent_con_comprobante(db):
+    """Columna "Comprobante" (pedido del usuario, 2026-08-19) — el CPBTE
+    de ENTRADA de cada lote, junto a la cantidad de artículos que ya
+    traía `resumen_lotes()`."""
+    repos = RepositoryFactory(db)
+    db.add(Despacho(COD1="AA", COD2="1", NRODESP="L001", CPBTE=500, FECENT=date(2026, 1, 5), STOCK=Decimal("10")))
+    db.add(Despacho(COD1="AA", COD2="2", NRODESP="L001", CPBTE=500, FECENT=date(2026, 1, 5), STOCK=Decimal("20")))
+    db.add(Despacho(COD1="BB", COD2="1", NRODESP="L002", CPBTE=600, FECENT=date(2026, 2, 1), STOCK=Decimal("5")))
+    db.commit()
+
+    resumen = {f["nrodesp"]: f for f in repos.despacho().resumen_lotes()}
+    assert resumen["L001"]["cpbte"] == 500
+    assert resumen["L001"]["cantidad"] == 2
+    assert resumen["L002"]["cpbte"] == 600
+    assert resumen["L002"]["cantidad"] == 1
+
+
+def test_despacho_articulos_de_lote_filtra_por_fecent_si_el_nrodesp_se_repite(db):
+    """Bug real encontrado por el usuario con datos reales (2026-08-19):
+    "22001IC05005447M dice que tiene 2 artículos y al desplegar muestra
+    más de 15 renglones" — ese NRODESP real tiene 27 filas con
+    FECENT=17/03/2022 y 2 más con FECENT=05/01/2023 (2 lotes de
+    importación distintos que reusan el número); sin filtrar también por
+    `fecent`, `articulos_de_lote()` traía las 29 juntas sin importar cuál
+    de los 2 renglones del resumen se hubiera clickeado."""
+    repos = RepositoryFactory(db)
+    db.add(Despacho(COD1="AA", COD2="1", NRODESP="REPETIDO", FECENT=date(2022, 3, 17)))
+    db.add(Despacho(COD1="BB", COD2="1", NRODESP="REPETIDO", FECENT=date(2022, 3, 17)))
+    db.add(Despacho(COD1="CC", COD2="1", NRODESP="REPETIDO", FECENT=date(2023, 1, 5)))
+    db.commit()
+
+    todos = repos.despacho().articulos_de_lote("REPETIDO")
+    assert len(todos) == 3  # comportamiento previo, sin fecent, se mantiene disponible
+
+    solo_2022 = repos.despacho().articulos_de_lote("REPETIDO", date(2022, 3, 17))
+    assert sorted(d.COD1 for d in solo_2022) == ["AA", "BB"]
+
+    solo_2023 = repos.despacho().articulos_de_lote("REPETIDO", date(2023, 1, 5))
+    assert [d.COD1 for d in solo_2023] == ["CC"]
+
+
 # ---------------------------------------------------------------------------
 # ClienteRepository.proximo_codigo (Abmclte.frm Sub Blanquea, líneas 1839-1891)
 # ---------------------------------------------------------------------------
@@ -691,3 +732,28 @@ def test_ultima_venta_devuelve_la_fecha_mas_reciente_del_cliente(db):
 def test_ultima_venta_sin_facturas_devuelve_none(db):
     repos = RepositoryFactory(db)
     assert repos.fciva_vta().ultima_venta(50) is None
+
+
+# ---------------------------------------------------------------------------
+# FcivaVtaRepository.by_comprobante
+# ---------------------------------------------------------------------------
+
+
+def test_fciva_vta_by_comprobante_tolera_el_padding_fijo_de_access(db):
+    """Bug real encontrado probando "Ver factura" desde Cuentas Corrientes
+    con datos reales (2026-08-19): `FcivaVta.TIPO` en `fcmenu_dev` real
+    viene con padding fijo de Access (`'1 '`, no `'1'`) — el `==` exacto
+    contra el TIPO limpio que arma `CtaCteWindow` nunca encontraba nada,
+    devolvía `None` en silencio y el clic no hacía nada visible."""
+    repos = RepositoryFactory(db)
+    db.add(FcivaVta(TIPO="1 ", LETRA="A ", PTOVTA=1, CPBTE=20120, CLTE=3916))
+    db.commit()
+
+    encontrada = repos.fciva_vta().by_comprobante("1", "A", 1, 20120)
+    assert encontrada is not None
+    assert encontrada.CLTE == 3916
+
+
+def test_fciva_vta_by_comprobante_sin_coincidencia_devuelve_none(db):
+    repos = RepositoryFactory(db)
+    assert repos.fciva_vta().by_comprobante("1", "A", 1, 99999) is None

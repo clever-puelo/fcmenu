@@ -10,10 +10,12 @@ para simular varias pantallas dentro de una sola.
 1. Extracto anual (`Sub DoVer3`/`CargaGrilla`) — grilla principal.
 2. "Ver Cheques" (`Sub DoVer9`) — `ChequesClienteDialog`.
 3. "Ver Saldos" (`Sub DoVer8`) — `SaldosClientesDialog`, permite además
-   cambiar de cliente con un doble clic.
+   cambiar de cliente con un clic (cierra el diálogo y vuelve acá ya con
+   ese cliente cargado).
 4. Clic en una fila del extracto → drill-down a factura/NC/ND
-   (`Sub MuestraDetalle`) — `FacturaDetalleDialog`, con los renglones
-   reales ya incluidos (no hace falta un segundo clic "Ver Items").
+   (`Sub MuestraDetalle`) — `FacturaEmitidaDetalleDialog` (mismo módulo
+   que usa "Facturas Emitidas", con Imprimir), con los renglones reales
+   ya incluidos (no hace falta un segundo clic "Ver Items").
 
 **Panel lateral**: `CtaCte.frm` declaraba 6 campos (Contacto/Teléfono/
 Fec. Alta/Val.Pend./Últ.Vta.Ctd./Últ.Vta.C.Cte./Sdo.Venc.) que ningún
@@ -60,7 +62,7 @@ from migration.services import CuentaCorrienteService, FilaExtracto
 
 from .cheques_cliente_dialog import ChequesClienteDialog
 from .cliente_busqueda_window import ClienteBusquedaWindow
-from .factura_detalle_dialog import FacturaDetalleDialog
+from .factura_emitida_detalle_dialog import FacturaEmitidaDetalleDialog
 from .nota_cliente_dialog import NotaClienteDialog
 from .saldos_clientes_dialog import SaldosClientesDialog
 from .widgets import redimensionar_pct_pantalla
@@ -248,7 +250,13 @@ class CtaCteWindow(QMainWindow):
         )
         if factura is None:
             return
-        FacturaDetalleDialog(self.repos, factura, parent=self).exec()
+        # Mismo módulo de drill-down que "Facturas Emitidas" (pedido del
+        # usuario, 2026-08-19: "En la consulta de cuenta corriente se
+        # pueda hacer lo mismo" — cabecera compacta, detalle grande con
+        # scroll, botón Imprimir) — antes tenía su propio
+        # `FacturaDetalleDialog`, más simple, ahora unificado en una sola
+        # pantalla para no mantener 2 vistas de lo mismo.
+        FacturaEmitidaDetalleDialog(self.repos, factura, parent=self).exec()
 
     # ------------------------------------------------------------------
     # Panel lateral

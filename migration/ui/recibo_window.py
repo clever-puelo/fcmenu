@@ -98,7 +98,10 @@ COL_APLICADO = 5
 COL_DESCUENTO = 6
 COLUMNAS_PENDIENTES = ["Comprobante", "Tipo", "Fecha", "Fec.Vto.", "Debe", "Aplicado", "Descuento"]
 COLUMNAS_SOLO_LECTURA = (COL_COMPROBANTE, COL_TIPO, COL_FECHA, COL_FECVTO, COL_DEBE)
-COLUMNAS_ALINEADAS_DERECHA = (COL_COMPROBANTE,)
+# Ajustar a la derecha todos los campos numéricos (feedback del usuario,
+# 2026-08-19) — antes sólo el Comprobante quedaba alineado a la derecha;
+# Debe/Aplicado/Descuento (importes de verdad) quedaban a la izquierda.
+COLUMNAS_ALINEADAS_DERECHA = (COL_COMPROBANTE, COL_DEBE, COL_APLICADO, COL_DESCUENTO)
 
 # Colores "invertidos" para una fila con Aplicado > 0 (feedback del
 # usuario, 2026-08-15) — mismo espíritu que el resaltado de selección

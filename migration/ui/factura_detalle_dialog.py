@@ -1,31 +1,18 @@
-"""Diálogo de drill-down a una factura/NC/ND desde el extracto de Cuenta
-Corriente — migración de `CtaCte.frm Sub MuestraDetalle` (Picture3) +
-`Sub Command6_Click` ("Ver Items", Picture2), líneas 2318-2382 y
-1742-1792.
+"""Grilla reusable de renglones reales (`Fcestad1`) de una factura/NC/ND
+puntual — migración de `CtaCte.frm Sub Command6_Click` ("Ver Items",
+Picture2, líneas 1742-1792) / `VerFact.frm` ("Ver Items").
 
-**Simplificación de UX confirmada por el mismo criterio ya aplicado en
-el resto de la migración** (ej. sacar el paso de confirmación extra del
-Recibo): el legacy mostraba primero sólo los totales y recién al
-clickear "Ver Items" cargaba el detalle en un panel aparte — acá se
-cargan los renglones directo, sin un segundo clic, porque la consulta es
-liviana (una factura real tiene pocos renglones) y no hay ningún motivo
-de negocio para ocultarlos.
-"""
+Usada tanto por el drill-down de Cuenta Corriente
+(`CtaCteWindow._on_click_fila_extracto`, que ahora reusa directo
+`FacturaEmitidaDetalleDialog` — antes tenía su propio `FacturaDetalleDialog`
+más simple, unificado en una sola pantalla para no mantener 2 vistas de
+lo mismo) como por `FacturaEmitidaDetalleDialog` (`VerFact.frm`)."""
 
 from __future__ import annotations
 
-from decimal import Decimal
+from typing import Optional
 
-from PyQt6.QtWidgets import (
-    QDialog,
-    QFormLayout,
-    QGroupBox,
-    QHBoxLayout,
-    QLabel,
-    QPushButton,
-    QVBoxLayout,
-    QWidget,
-)
+from PyQt6.QtWidgets import QGroupBox, QVBoxLayout
 
 from migration.decimals import format_decimal
 from migration.models import FcivaVta
@@ -37,16 +24,34 @@ COLUMNAS_ITEMS = [
     "Sección", "Pulg", "Mtr", "Milím.", "Telas", "Cant.", "P.Esp.", "P.Costo", "P.Venta", "Importe",
 ]
 
+# Alto de fila/encabezado real de `TablaBusqueda` (`widgets.py`) — usado
+# para calcular cuántas filas entran visibles sin scroll cuando se pide
+# `filas_visibles` (ver más abajo).
+_ALTO_FILA_TABLA_BUSQUEDA = 24
+_ALTO_HEADER_TABLA_BUSQUEDA = 24
 
-def construir_grupo_renglones(repos: RepositoryFactory, factura: FcivaVta, titulo: str = "Renglones") -> QGroupBox:
+
+def construir_grupo_renglones(
+    repos: RepositoryFactory,
+    factura: FcivaVta,
+    titulo: str = "Renglones",
+    *,
+    filas_visibles: Optional[int] = None,
+) -> QGroupBox:
     """Renglones reales (`Fcestad1`) de una factura/NC/ND puntual, en un
-    `QGroupBox` listo para insertar en cualquier diálogo — extraído de
-    `FacturaDetalleDialog._armar_items` para reusarlo también en
-    `FacturaEmitidaDetalleDialog` (`VerFact.frm`, botón "Ver Items"),
-    mismo mecanismo (`Fcestad1Repository.by_comprobante`)."""
+    `QGroupBox` listo para insertar en cualquier diálogo.
+
+    `filas_visibles`: si se pasa, fija un alto mínimo para que ese
+    número de renglones se vea sin necesidad de scrollear (el resto
+    scrollea normal, `TablaBusqueda` ya es una `QTableWidget` con su
+    propio scroll) — pedido del usuario para `FacturaEmitidaDetalleDialog`
+    (2026-08-19: "Agrandar los mas posible el panel de detalle como para
+    poder ver 10 renglones y poder scrolear")."""
     grupo = QGroupBox(titulo)
     layout = QVBoxLayout(grupo)
     tabla = TablaBusqueda(COLUMNAS_ITEMS)
+    if filas_visibles is not None:
+        tabla.setMinimumHeight(filas_visibles * _ALTO_FILA_TABLA_BUSQUEDA + _ALTO_HEADER_TABLA_BUSQUEDA + 4)
 
     renglones = repos.fcestad1().by_comprobante(
         int(factura.TIPO) if factura.TIPO is not None else 1,
@@ -73,59 +78,5 @@ def construir_grupo_renglones(repos: RepositoryFactory, factura: FcivaVta, titul
         for r in renglones
     ]
     tabla.cargar_filas(filas)
-    layout.addWidget(tabla)
+    layout.addWidget(tabla, stretch=1)
     return grupo
-
-
-class FacturaDetalleDialog(QDialog):
-    """Encabezado (Neto/IVA Ins./IVA No Ins./Total/Ítems/Cantidad) +
-    renglones reales (`Fcestad1`) de una factura/NC/ND puntual."""
-
-    def __init__(self, repos: RepositoryFactory, factura: FcivaVta, parent: QWidget | None = None):
-        super().__init__(parent)
-        self.repos = repos
-        self.factura = factura
-
-        ptovta_txt = str(factura.PTOVTA or 0).rjust(4, "0")
-        cpbte_txt = str(factura.CPBTE or 0).rjust(8, "0")
-        self.setWindowTitle(f"Comprobante {factura.LETRA or ''}  {ptovta_txt}-{cpbte_txt}")
-        self.resize(700, 480)
-
-        self._construir_ui()
-
-    # ------------------------------------------------------------------
-    def _construir_ui(self) -> None:
-        layout = QVBoxLayout(self)
-        layout.addWidget(self._armar_cabecera())
-        layout.addWidget(self._armar_items(), stretch=1)
-
-        fila_botones = QHBoxLayout()
-        fila_botones.addStretch()
-        btn_cerrar = QPushButton("Cerrar")
-        btn_cerrar.clicked.connect(self.accept)
-        fila_botones.addWidget(btn_cerrar)
-        layout.addLayout(fila_botones)
-
-    def _armar_cabecera(self) -> QGroupBox:
-        f = self.factura
-        grupo = QGroupBox(f"{(f.NOMB or '').strip()}  —  {f.CLTE}")
-        form = QFormLayout(grupo)
-
-        neto = f.GRINS or Decimal("0")
-        iva_ins = f.IVAINS or Decimal("0")
-        iva_noins = f.IVANOINS or Decimal("0")
-        total = neto + iva_ins + iva_noins
-
-        form.addRow("Tot. Neto :", QLabel(f"$ {format_decimal(neto)}"))
-        form.addRow("IVA Ins. :", QLabel(f"$ {format_decimal(iva_ins)}"))
-        form.addRow("IVA N/Ins. :", QLabel(f"$ {format_decimal(iva_noins)}"))
-        lbl_total = QLabel(f"$ {format_decimal(total)}")
-        lbl_total.setStyleSheet("font-weight: bold;")
-        form.addRow("Tot. Bruto :", lbl_total)
-        form.addRow("Ítems :", QLabel(str(f.ITEMS or 0)))
-        form.addRow("Unids. :", QLabel(str(f.TOTCAN or 0)))
-
-        return grupo
-
-    def _armar_items(self) -> QGroupBox:
-        return construir_grupo_renglones(self.repos, self.factura)

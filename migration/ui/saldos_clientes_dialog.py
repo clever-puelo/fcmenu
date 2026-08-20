@@ -4,9 +4,13 @@ de TODOS los clientes, misma fórmula real de `deuda_cliente()`/
 `TIPOS_DEBE` (ver `CtascteRepository.saldos_todos_clientes()`, agregado
 en una sola consulta SQL en vez del loop cliente-por-cliente del legacy).
 
-Doble clic en una fila cambia el cliente de la ventana principal —
-mismo criterio de convención ya establecido (grillas de selección dentro
-de un diálogo usan doble clic, ver `widgets.py`).
+Un clic en una fila cierra este diálogo y cambia el cliente de la
+ventana principal (`CtaCteWindow._on_ver_saldos`) — feedback del
+usuario, 2026-08-19: "cuando se clickee en un cliente, cierre la
+ventana y... cambie el cliente". Antes pedía doble clic (mismo criterio
+que otros buscadores de esta app); un solo clic alcanza para un panel
+de selección tan simple como éste, mismo criterio ya aplicado a
+`ComprobanteAplicarDialog`/`DespachoSelectorDialog`.
 """
 
 from __future__ import annotations
@@ -38,7 +42,7 @@ class SaldosClientesDialog(QDialog):
         layout = QVBoxLayout(self)
 
         self.tabla = TablaBusqueda(COLUMNAS, columnas_derecha=(0, 2))  # Código, Saldo
-        self.tabla.itemDoubleClicked.connect(self._on_elegir)
+        self.tabla.itemClicked.connect(self._on_elegir)
         filas = [
             ([str(f["codigo"]), f["nombre"] or "", format_decimal(f["saldo"])], f)
             for f in filas_saldo

@@ -72,9 +72,10 @@ from migration.services import (
 )
 
 from .cliente_busqueda_window import ClienteBusquedaWindow
+from .comprobante_aplicar_dialog import ComprobanteAplicarDialog
 from .decimals import format_decimal
 from .nota_cliente_dialog import NotaClienteDialog
-from .widgets import TablaBusqueda, compactar_alto_filas, crear_recuadro_destacado, redimensionar_pct_pantalla
+from .widgets import compactar_alto_filas, crear_recuadro_destacado, redimensionar_pct_pantalla
 
 CUIT_EMISOR_DEFAULT = "33703467909"  # ídem FacturadorWindow
 TIPO_NC = 2
@@ -87,13 +88,6 @@ COL_CANTIDAD = 3
 COL_PRECIO = 4
 COL_IMPORTE = 5
 COLUMNAS_RENGLONES = ["", "Sección/Código", "Descripción", "Cantidad", "Precio Unit.", "Importe"]
-
-COL_COMPROBANTE = 0
-COL_TIPO = 1
-COL_FECHA = 2
-COL_FECVTO = 3
-COL_DEBE = 4
-COLUMNAS_PENDIENTES = ["Comprobante", "Tipo", "Fecha", "Fec.Vto.", "Debe"]
 
 
 class NotaCreditoMercaderiaWindow(QMainWindow):
@@ -116,6 +110,11 @@ class NotaCreditoMercaderiaWindow(QMainWindow):
         self.tiene_nota_cliente = False
         self._facturas_cliente: list[FcivaVta] = []
         self._usuario = os.environ.get("USERNAME", "SISTEMA")[:6]
+        # Comprobante elegido en la ventana flotante "Aplicar a" (ver
+        # `ComprobanteAplicarDialog`) — reemplaza la tabla completa que
+        # antes vivía siempre visible (feedback del usuario, 2026-08-19,
+        # mismo patrón que `NotaCreditoConceptoWindow`).
+        self._comprobante_seleccionado: Optional[Ctascte] = None
 
         self._construir_ui()
         self._nueva()
@@ -162,6 +161,15 @@ class NotaCreditoMercaderiaWindow(QMainWindow):
         self.combo_factura = QComboBox()
         self.combo_factura.currentIndexChanged.connect(self._on_factura_elegida)
         fila_factura.addWidget(self.combo_factura, stretch=1)
+        # "Aplicar a..." abre la ventana flotante de selección del
+        # comprobante contra el que se imputa esta Nota de Crédito — NO
+        # tiene por qué ser la misma Factura Original que se devuelve
+        # (ver docstring del módulo) — mismo patrón/diálogo que
+        # `NotaCreditoConceptoWindow` (feedback del usuario, 2026-08-19).
+        self.btn_aplicar_a = QPushButton("Aplicar a...")
+        self.btn_aplicar_a.setEnabled(False)
+        self.btn_aplicar_a.clicked.connect(self._on_aplicar_a)
+        fila_factura.addWidget(self.btn_aplicar_a)
         fila_factura.addStretch()
         self.lbl_proximo_numero = QLabel("Próx. Nº: —")
         fila_factura.addWidget(self.lbl_proximo_numero)
@@ -173,7 +181,8 @@ class NotaCreditoMercaderiaWindow(QMainWindow):
     # Renglones de la Factura original (checkbox = se devuelve)
     # ------------------------------------------------------------------
     def _armar_renglones(self) -> QGroupBox:
-        grupo = QGroupBox("Renglones de la Factura Original — tildá los que se devuelven")
+        self.grupo_renglones = QGroupBox("Renglones de la Factura Original — tildá los que se devuelven")
+        grupo = self.grupo_renglones
         layout = QVBoxLayout(grupo)
 
         self.tabla_renglones = QTableWidget(0, len(COLUMNAS_RENGLONES))
@@ -250,38 +259,42 @@ class NotaCreditoMercaderiaWindow(QMainWindow):
         return resultado
 
     # ------------------------------------------------------------------
-    # Comprobante a Imputar
+    # Comprobante a Imputar — panel achicado (feedback del usuario,
+    # 2026-08-19: "El panel comprobantes a imputar achicarlo y colocar
+    # el cpbte. seleccionado"), la selección en sí vive ahora en la
+    # ventana flotante `ComprobanteAplicarDialog` (botón "Aplicar a...",
+    # junto a "Factura Original" — ver `_armar_cabecera`).
     # ------------------------------------------------------------------
     def _armar_comprobante_imputar(self) -> QGroupBox:
         grupo = QGroupBox("Comprobante a Imputar")
-        layout = QVBoxLayout(grupo)
-        self.tabla_pendientes = TablaBusqueda(COLUMNAS_PENDIENTES, columnas_derecha=(COL_COMPROBANTE, COL_DEBE))
-        self.tabla_pendientes.itemSelectionChanged.connect(self._recalcular_totales)
-        layout.addWidget(self.tabla_pendientes)
+        layout = QHBoxLayout(grupo)
+        self.lbl_comprobante_imputar = QLabel("(sin comprobante seleccionado — usá \"Aplicar a...\")")
+        layout.addWidget(self.lbl_comprobante_imputar, stretch=1)
         return grupo
 
-    def _cargar_pendientes(self) -> None:
-        if self.cliente_actual is None:
-            self.tabla_pendientes.cargar_filas([])
+    def _refrescar_panel_comprobante(self) -> None:
+        comprobante = self._comprobante_seleccionado
+        if comprobante is None:
+            self.lbl_comprobante_imputar.setText('(sin comprobante seleccionado — usá "Aplicar a...")')
             return
-        pendientes = self.cuenta_corriente_service.facturas_pendientes(self.cliente_actual.CODIGO)
-        filas = [
-            (
-                [
-                    f"{(p.PREFIJO or 0):04d}-{(p.CPBTE or 0):08d}",
-                    ETIQUETAS_TIPO_CTASCTE.get(p.TIPO, "—"),
-                    p.FECHA.strftime("%d/%m/%Y") if p.FECHA else "",
-                    p.FECVTO.strftime("%d/%m/%Y") if p.FECVTO else "",
-                    format_decimal(p.DEBE or Decimal("0")),
-                ],
-                p,
-            )
-            for p in pendientes
-        ]
-        self.tabla_pendientes.cargar_filas(filas)
+        etiqueta_tipo = ETIQUETAS_TIPO_CTASCTE.get(comprobante.TIPO, "—")
+        fecha_txt = comprobante.FECHA.strftime("%d/%m/%Y") if comprobante.FECHA else "—"
+        self.lbl_comprobante_imputar.setText(
+            f"{etiqueta_tipo} {(comprobante.PREFIJO or 0):04d}-{(comprobante.CPBTE or 0):08d} — {fecha_txt} — "
+            f"Importe sin aplicar: $ {format_decimal(comprobante.DEBE or Decimal('0'))}"
+        )
 
-    def _comprobante_a_imputar(self) -> Optional[Ctascte]:
-        return self.tabla_pendientes.objeto_seleccionado()
+    def _on_aplicar_a(self) -> None:
+        if self.cliente_actual is None:
+            return
+        elegido = ComprobanteAplicarDialog.elegir(
+            self.repos, self.cuenta_corriente_service, self.cliente_actual.CODIGO, parent=self
+        )
+        if elegido is None:
+            return
+        self._comprobante_seleccionado = elegido
+        self._refrescar_panel_comprobante()
+        self._recalcular_totales()
 
     # ------------------------------------------------------------------
     # Pie
@@ -333,21 +346,26 @@ class NotaCreditoMercaderiaWindow(QMainWindow):
         cliente = self.cliente_actual
         self.combo_factura.blockSignals(True)
         self.combo_factura.clear()
+        # Cambiar de Cliente invalida cualquier comprobante ya elegido
+        # en "Aplicar a..." (era de OTRO Cliente).
+        self._comprobante_seleccionado = None
+        self._refrescar_panel_comprobante()
         if cliente is None:
             self.lbl_cliente.setText("(sin cliente elegido)")
             self.btn_nota_cliente.setEnabled(False)
+            self.btn_aplicar_a.setEnabled(False)
             self.tiene_nota_cliente = False
             self.btn_nota_cliente.setStyleSheet("")
             self.btn_elegir_cliente.setText(self.TEXTO_BTN_ELEGIR_CLIENTE)
             self.combo_factura.blockSignals(False)
             self.tabla_renglones.setRowCount(0)
-            self._cargar_pendientes()
             self._refrescar_proximo_numero()
             self._recalcular_totales()
             return
 
         self.lbl_cliente.setText(f"{cliente.CODIGO} — {(cliente.NOMB or '').strip()} — CUIT {cliente.CUIT or 's/d'}")
         self.btn_nota_cliente.setEnabled(True)
+        self.btn_aplicar_a.setEnabled(True)
         self.btn_elegir_cliente.setText(self.TEXTO_BTN_CAMBIAR_CLIENTE)
 
         self._actualizar_boton_nota_cliente()
@@ -361,7 +379,6 @@ class NotaCreditoMercaderiaWindow(QMainWindow):
             self.combo_factura.addItem(etiqueta, factura)
         self.combo_factura.blockSignals(False)
 
-        self._cargar_pendientes()
         self._refrescar_proximo_numero()
         if self.combo_factura.count():
             self._on_factura_elegida()
@@ -404,6 +421,11 @@ class NotaCreditoMercaderiaWindow(QMainWindow):
             self.lbl_proximo_numero.setText(f"Próx. Nº: (no disponible, Letra {letra})")
 
     def _recalcular_totales(self) -> None:
+        # No habilita el Detalle (los renglones a devolver) hasta elegir
+        # el comprobante a imputar (feedback del usuario, 2026-08-19:
+        # "Si no selecciona la factura o ND no habilite detalle").
+        self.grupo_renglones.setEnabled(self._comprobante_seleccionado is not None)
+
         renglones = self._renglones_elegidos()
         bruto = sum((r.importe for r in renglones), Decimal("0"))
         civa = self.cliente_actual.CIVA if self.cliente_actual else 3
@@ -417,7 +439,7 @@ class NotaCreditoMercaderiaWindow(QMainWindow):
         habilitado = (
             self.cliente_actual is not None
             and total.total > 0
-            and self._comprobante_a_imputar() is not None
+            and self._comprobante_seleccionado is not None
         )
         self.btn_emitir.setEnabled(habilitado)
 
@@ -426,6 +448,7 @@ class NotaCreditoMercaderiaWindow(QMainWindow):
     # ------------------------------------------------------------------
     def _nueva(self) -> None:
         self.cliente_actual = None
+        self._comprobante_seleccionado = None
         self._renglones_reales = []
         self._refrescar_cliente()
         QTimer.singleShot(0, self._on_elegir_cliente)
@@ -446,7 +469,7 @@ class NotaCreditoMercaderiaWindow(QMainWindow):
             QMessageBox.warning(self, "Nota de Crédito", "Tildá al menos un renglón para devolver.")
             return
 
-        comprobante_a_imputar = self._comprobante_a_imputar()
+        comprobante_a_imputar = self._comprobante_seleccionado
         if comprobante_a_imputar is None:
             QMessageBox.warning(self, "Nota de Crédito", "Elegí el comprobante contra el cual se imputa esta Nota de Crédito.")
             return

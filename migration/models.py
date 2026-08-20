@@ -4,7 +4,7 @@ from datetime import date, datetime
 from decimal import Decimal
 from typing import Optional
 
-from sqlalchemy import Date, ForeignKey, Integer, Numeric, String, Text
+from sqlalchemy import Date, ForeignKey, Index, Integer, Numeric, String, Text, text
 from sqlalchemy.orm import DeclarativeBase, Mapped, mapped_column
 
 
@@ -16,7 +16,15 @@ class Cliente(Base):
     __tablename__ = "Clientes"
 
     id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
-    CODIGO: Mapped[int] = mapped_column(Integer, nullable=False)
+    # `unique=True` (2026-08-19) — verificado contra `fcmenu_dev` real
+    # que no hay ningún CODIGO duplicado antes de agregarlo (era la
+    # clave de negocio real, sin ninguna restricción declarada en la
+    # base hasta ahora — ver "Nota de fidelidad arquitectónica" de
+    # `Documentacion_Tecnica_Arquitectura.md`, §3.2). Primer paso, de
+    # menor riesgo, hacia integridad referencial real; todavía sin
+    # `ForeignKey()` desde las tablas que lo referencian (`Ctasctes.CLTE`
+    # etc. tienen huérfanos reales, ver Alembic `ca859aa3ee33`).
+    CODIGO: Mapped[int] = mapped_column(Integer, nullable=False, unique=True)
     NOMB: Mapped[Optional[str]] = mapped_column(String(100), nullable=True)
     DIR: Mapped[Optional[str]] = mapped_column(String(120), nullable=True)
     LOC: Mapped[Optional[str]] = mapped_column(String(80), nullable=True)
@@ -51,6 +59,33 @@ class Cliente(Base):
 
 class Articulo(Base):
     __tablename__ = "Articulo"
+    # Índice único por expresión sobre (COD1, COD2) YA RECORTADOS
+    # (2026-08-19) — verificado contra `fcmenu_dev` real que no hay
+    # colisiones una vez descartado el padding fijo de Access (`'GPN  '`
+    # vs `'GPN'`, mismo bug documentado en varios repos de este
+    # proyecto). Expresión (`trim(...)`), no `unique=True` directo sobre
+    # las columnas: eso exigiría reescribir el dato histórico con
+    # espacios recortados, y el resto del proyecto siempre prefirió
+    # tolerar el padding en la consulta (`func.trim()`) antes que tocar
+    # los valores migrados 1:1 del `.mdb` original — este índice sigue
+    # ese mismo criterio.
+    #
+    # `trim(...)`, no `TRIM(BOTH FROM ...)`: esta última es la forma que
+    # Postgres devuelve al reflejar el índice (`alembic check` la marca
+    # como "drift" igual, es un falso positivo cosmético conocido de
+    # comparar el DDL reflejado como texto — confirmado sin diferencia
+    # real contra `fcmenu_dev`, ver Alembic `ca859aa3ee33`) pero
+    # `TRIM(BOTH FROM ...)` no es sintaxis válida de SQLite, que sí
+    # necesita poder crear esta misma tabla para la suite de tests
+    # (`Base.metadata.create_all()` contra la base en memoria).
+    __table_args__ = (
+        Index(
+            "ix_articulo_cod1_cod2_trim_unique",
+            text('trim("COD1")'),
+            text('trim("COD2")'),
+            unique=True,
+        ),
+    )
 
     id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
     COD1: Mapped[Optional[str]] = mapped_column(String(30), nullable=True)
@@ -170,9 +205,21 @@ class Parametro(Base):
 
 class Ctascte(Base):
     __tablename__ = "Ctasctes"
+    # Índice sobre CLTE (2026-08-19) — `repository.py` filtra por esta
+    # columna en casi todos sus métodos (extracto, pendientes de cobro,
+    # etc.), sin ningún índice hasta ahora.
+    __table_args__ = (Index("ix_ctasctes_clte", "CLTE"),)
 
     id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
-    CLTE: Mapped[Optional[int]] = mapped_column(Integer, nullable=True)
+    # `ForeignKey` real hacia `Clientes.CODIGO` (2026-08-19, primer paso
+    # de integridad referencial real del proyecto — ver "Nota de
+    # fidelidad arquitectónica" de `Documentacion_Tecnica_Arquitectura.md`
+    # §3.2) — agregada como `NOT VALID` en el Alembic correspondiente:
+    # hay 30 filas reales con un CLTE que ya no existe en Clientes
+    # (huérfanas de bajas/correcciones históricas, de HACE MÁS de 10
+    # años en 27 de los 30 casos) — `NOT VALID` protege todo INSERT/
+    # UPDATE nuevo sin exigir limpiar ese historial primero.
+    CLTE: Mapped[Optional[int]] = mapped_column(Integer, ForeignKey("Clientes.CODIGO"), nullable=True)
     FECHA: Mapped[Optional[date]] = mapped_column(Date, nullable=True)
     LETRA: Mapped[Optional[str]] = mapped_column(String(20), nullable=True)
     TIPO: Mapped[Optional[int]] = mapped_column(Integer, nullable=True)
@@ -226,6 +273,16 @@ class Imputacion(Base):
 
 class FcivaVta(Base):
     __tablename__ = "FcivaVta"
+    # Índices (2026-08-19): CLTE (Postgres NO indexa solo el lado
+    # referenciante de una FK — hay que pedirlo aparte si se va a
+    # filtrar por ahí, y `repository.py` lo hace todo el tiempo) y el
+    # combo TIPO/LETRA/PTOVTA/CPBTE que usa `by_comprobante()` (el
+    # lookup que el bug real de "no funciona el click en Cta.Cte." dejó
+    # andando recién ahora, ver `func.trim()` en `repository.py`).
+    __table_args__ = (
+        Index("ix_fcivavta_clte", "CLTE"),
+        Index("ix_fcivavta_comprobante", "TIPO", "LETRA", "PTOVTA", "CPBTE"),
+    )
 
     id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
     FECHA: Mapped[Optional[date]] = mapped_column(Date, nullable=True)
@@ -233,7 +290,10 @@ class FcivaVta(Base):
     LETRA: Mapped[Optional[str]] = mapped_column(String(10), nullable=True)
     PTOVTA: Mapped[Optional[int]] = mapped_column(Integer, nullable=True)
     CPBTE: Mapped[Optional[int]] = mapped_column(Integer, nullable=True)
-    CLTE: Mapped[Optional[int]] = mapped_column(Integer, nullable=True)
+    # `ForeignKey` real (`NOT VALID`) hacia `Clientes.CODIGO`
+    # (2026-08-19) — mismo criterio que `Ctascte.CLTE`; sólo 6 filas
+    # reales huérfanas (1 de ellas de los últimos 10 años).
+    CLTE: Mapped[Optional[int]] = mapped_column(Integer, ForeignKey("Clientes.CODIGO"), nullable=True)
     NOMB: Mapped[Optional[str]] = mapped_column(String(100), nullable=True)
     PCIA: Mapped[Optional[str]] = mapped_column(String(50), nullable=True)
     CVTA: Mapped[Optional[str]] = mapped_column(String(20), nullable=True)
@@ -259,6 +319,19 @@ class FcivaVta(Base):
 
 class Fcestad1(Base):
     __tablename__ = "Fcestad1"
+    # Índices (2026-08-19) sobre la tabla más grande de la base (238.143
+    # filas reales): (COD1, COD2) para `by_articulo()`/`by_cod1_cod2()`,
+    # y el combo TIPO/LETRA/PTOVTA/CPBTE para `by_comprobante()` (los
+    # renglones reales que arma cada `FacturaEmitidaDetalleDialog`/
+    # `NotaCreditoMercaderiaWindow`). Sin `FK` hacia Articulo: ~17% de
+    # las filas reales (41.078) no tienen Artículo — la mayoría por
+    # diseño, no por inconsistencia (ítem libre "**"/líneas que usan la
+    # descripción de la Sección, sin código de Artículo real), ver
+    # `factura_renglon.SECCION_ITEM_LIBRE`.
+    __table_args__ = (
+        Index("ix_fcestad1_cod1_cod2", "COD1", "COD2"),
+        Index("ix_fcestad1_comprobante", "TIPO", "LETRA", "PTOVTA", "CPBTE"),
+    )
 
     id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
     COD1: Mapped[Optional[str]] = mapped_column(String(30), nullable=True)
@@ -376,9 +449,18 @@ class DtoxClte(Base):
     """
 
     __tablename__ = "DtoxClte"
+    # Índice sobre (CLTE, SECCION) (2026-08-19) — `by_cliente_seccion()`
+    # se llama por cada renglón cargado en el Facturador, sin índice
+    # hasta ahora, sobre una tabla de 12.035 filas reales.
+    __table_args__ = (Index("ix_dtoxclte_clte_seccion", "CLTE", "SECCION"),)
 
     id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
-    CLTE: Mapped[Optional[int]] = mapped_column(Integer, nullable=False)
+    # `ForeignKey` real (`NOT VALID`) hacia `Clientes.CODIGO`
+    # (2026-08-19) — mismo criterio que `Ctascte.CLTE`; 117 filas reales
+    # huérfanas (config de descuentos de clientes ya dados de baja, sin
+    # fecha propia — no aplica el recorte de 10 años que sí redujo
+    # Ctasctes/FcivaVta, ver `load_csv_to_postgres.py`).
+    CLTE: Mapped[Optional[int]] = mapped_column(Integer, ForeignKey("Clientes.CODIGO"), nullable=False)
     SECCION: Mapped[Optional[str]] = mapped_column(String(5), nullable=True)
     DTO1: Mapped[Optional[Decimal]] = mapped_column(Numeric(12, 2), nullable=True)
     DTO2: Mapped[Optional[Decimal]] = mapped_column(Numeric(12, 2), nullable=True)
@@ -412,6 +494,28 @@ class Despacho(Base):
     """
 
     __tablename__ = "Despachos"
+    # Índices (2026-08-19): (COD1, COD2) — relación con Articulo — y
+    # (NRODESP, FECENT), el mismo par que agrupa `resumen_lotes()`/
+    # filtra `articulos_de_lote()` (ver el bug real corregido el mismo
+    # día: un NRODESP repetido en 2 fechas de entrada distintas).
+    #
+    # **Sin `ForeignKey` real hacia Articulo — limitación técnica de
+    # Postgres, no una decisión de negocio pendiente**: el índice único
+    # de `Articulo` es por EXPRESIÓN (`trim(COD1), trim(COD2)`, ver esa
+    # clase) porque el dato real tiene padding de Access en ambos lados
+    # (`Despachos.COD1='GPN  '` vs `Articulo.COD1='GPN'`, confirmado);
+    # Postgres exige que el lado referenciado de una FK sea una
+    # constraint UNIQUE/PK sobre columnas literales, no un índice por
+    # expresión — no hay forma de declarar esta FK sin antes reescribir
+    # el dato histórico (recortar el padding de una vez en vez de
+    # tolerarlo en cada consulta), que es una decisión más grande,
+    # aparte de este cambio. Quedan también 58 filas reales sin
+    # Artículo (catálogo discontinuado/renombrado desde que se cargó
+    # ese lote) — un motivo más para no forzarlo todavía.
+    __table_args__ = (
+        Index("ix_despachos_cod1_cod2", "COD1", "COD2"),
+        Index("ix_despachos_nrodesp_fecent", "NRODESP", "FECENT"),
+    )
 
     id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
     COD1: Mapped[Optional[str]] = mapped_column(String(5), nullable=True)

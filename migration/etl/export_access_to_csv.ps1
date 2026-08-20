@@ -13,9 +13,19 @@
 # models.py (ver CotizacionRepository).
 
 param(
-    # Lista opcional de tablas a exportar (por defecto, las 14 completas).
+    # Lista opcional de tablas a exportar (por defecto, las 20 completas).
     # Ej.: -Tablas Articulo,Fctabla1 para re-exportar solo un subconjunto.
-    [string[]]$Tablas
+    [string[]]$Tablas,
+    # Modo rápido para ciclos de prueba (pedido del usuario, 2026-08-19:
+    # "la migración... se hará varias veces mientras esté en etapa de
+    # pruebas. Debe ser automática, rápida y segura") — salta Fcestad1/
+    # MovStock (las 2 tablas más grandes, ~480.000 de ~714.000 filas
+    # reales) en el EXPORT también, no sólo en la carga a Postgres
+    # (`load_csv_to_postgres.py --modo prueba` ya las deja vacías del
+    # lado de la carga; esto evita además pagar el tiempo de exportarlas
+    # desde Access vía DAO). El corte final a producción real corre SIN
+    # este switch, exporta las 20 completas.
+    [switch]$ModoPrueba
 )
 
 $ErrorActionPreference = "Stop"
@@ -28,12 +38,19 @@ $db = $engine.OpenDatabase($mdbPath)
 
 # Nombre de tabla en Access -> nombre de archivo CSV de salida.
 # (todas coinciden con __tablename__ de models.py)
-$tablas = if ($Tablas) { $Tablas } else { @(
+$todasLasTablas = @(
     "Clientes", "Articulo", "STOCK", "Fctabla1", "Parametro", "Ctasctes",
     "Imputacion", "FcivaVta", "Fcestad1", "NOTACLTE", "Proveed", "Bancos",
     "Cheques", "Cotizacion", "DtoxClte", "Despachos", "MovStock", "Totales",
     "Efectivo", "MovimVS"
-) }
+)
+$tablas = if ($Tablas) {
+    $Tablas
+} elseif ($ModoPrueba) {
+    $todasLasTablas | Where-Object { $_ -notin @("Fcestad1", "MovStock") }
+} else {
+    $todasLasTablas
+}
 
 $invariant = [System.Globalization.CultureInfo]::InvariantCulture
 

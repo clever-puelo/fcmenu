@@ -1,8 +1,14 @@
 """`DespachosConsultaWindow` — Consulta de Despachos, migración de
 `VerDesp.frm`: lista de lotes reales (`Sub CargaDespa`, agrupados por
-NRODESP+FECENT con cantidad de artículos) — doble clic en uno abre el
-detalle de artículos de ese lote (`LoteDetalleDialog`). El campo de
-búsqueda por Nº de Despacho exacto (`Sub DoVer`) filtra en vivo.
+NRODESP+FECENT con cantidad de artículos) — un clic en uno abre el
+detalle de artículos de ese lote (`LoteDetalleDialog`), centrado sobre
+esta ventana (Qt, sin posicionamiento manual — ver `_on_ver_lote`). El
+campo de búsqueda por Nº de Despacho exacto (`Sub DoVer`) filtra en vivo.
+
+**Columna "Comprobante"** (pedido del usuario, 2026-08-19: "agregar
+comprobante despues del despacho") — novedad respecto del legacy
+(`VerDesp.frm` no la mostraba), confirmada explícitamente por el
+usuario como mejora deliberada, no un hallazgo de paridad.
 """
 
 from __future__ import annotations
@@ -15,10 +21,11 @@ from migration.repository import RepositoryFactory
 from .lote_detalle_dialog import LoteDetalleDialog
 from .widgets import AlfanumericoLineEdit, TablaBusqueda, redimensionar_pct_pantalla
 
-COLUMNAS = ["Nº Despacho", "Fecha Entrada", "Artículos"]
+COLUMNAS = ["Nº Despacho", "Comprobante", "Fecha Entrada", "Artículos"]
 COL_NRODESP = 0
-COL_FECHA = 1
-COL_ARTICULOS = 2
+COL_CPBTE = 1
+COL_FECHA = 2
+COL_ARTICULOS = 3
 
 
 class DespachosConsultaWindow(QMainWindow):
@@ -57,9 +64,13 @@ class DespachosConsultaWindow(QMainWindow):
         fila_filtro.addWidget(btn_cerrar)
         layout.addLayout(fila_filtro)
 
-        self.tabla = TablaBusqueda(COLUMNAS, columnas_derecha=(COL_NRODESP, COL_ARTICULOS))
-        self.tabla.itemActivated.connect(self._on_ver_lote)
-        self.tabla.itemDoubleClicked.connect(self._on_ver_lote)
+        self.tabla = TablaBusqueda(COLUMNAS, columnas_derecha=(COL_NRODESP, COL_CPBTE, COL_ARTICULOS))
+        # Un clic (no doble) abre el detalle — pedido del usuario,
+        # 2026-08-19: "cuando se clickee en un renglon, abra una ventana
+        # flotante" — mismo criterio ya aplicado a otros paneles de
+        # selección simples esta misma sesión (ComprobanteAplicarDialog,
+        # SaldosClientesDialog).
+        self.tabla.itemClicked.connect(self._on_ver_lote)
         layout.addWidget(self.tabla, stretch=1)
 
     # ------------------------------------------------------------------
@@ -89,6 +100,7 @@ class DespachosConsultaWindow(QMainWindow):
             (
                 [
                     f["nrodesp"] or "",
+                    str(f["cpbte"]) if f["cpbte"] else "",
                     f["fecent"].strftime("%d/%m/%Y") if f["fecent"] else "",
                     str(f["cantidad"]),
                 ],
@@ -104,7 +116,20 @@ class DespachosConsultaWindow(QMainWindow):
         fila = self.tabla.objeto_en_fila(item.row())
         if fila is None or not fila["nrodesp"]:
             return
-        LoteDetalleDialog(self.repos, fila["nrodesp"], parent=self).exec()
+        # `fecent` desambigua el caso real de un NRODESP repetido en 2
+        # fechas de entrada distintas (ver docstring de
+        # `LoteDetalleDialog`/`DespachoRepository.articulos_de_lote`).
+        #
+        # Sin posición explícita (feedback del usuario, 2026-08-19: "la
+        # ventana debe comenzar en el centro del panel central porque
+        # sino se sale de pantalla") — la ronda anterior la movía a la
+        # derecha de esta ventana con `move()`, pero eso no respeta el
+        # borde real de la pantalla y podía salirse por completo si esta
+        # ventana ya estaba corrida hacia la derecha. Sin `move()`, Qt
+        # centra el diálogo modal sobre su padre solo (mismo
+        # comportamiento que ya usan el resto de los diálogos de la app,
+        # ninguno hace posicionamiento manual).
+        LoteDetalleDialog(self.repos, fila["nrodesp"], fila["fecent"], parent=self).exec()
 
     # ------------------------------------------------------------------
     def closeEvent(self, event) -> None:  # noqa: N802 (Qt override)

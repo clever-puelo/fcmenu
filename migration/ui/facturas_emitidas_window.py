@@ -12,6 +12,8 @@ medio)."""
 
 from __future__ import annotations
 
+from datetime import date
+
 from PyQt6.QtCore import QDate
 from PyQt6.QtWidgets import (
     QComboBox,
@@ -46,7 +48,7 @@ OPCIONES_LIMITE = [5, 10, 25, 50, 75, 100, 150]
 
 
 class FacturasEmitidasWindow(QMainWindow):
-    def __init__(self, parent: QWidget | None = None):
+    def __init__(self, parent: QWidget | None = None, *, fecha_inicial: date | None = None):
         super().__init__(parent)
         self.setWindowTitle("Facturas Emitidas")
         # % de la pantalla real (convención de sistema #11, feedback del
@@ -58,6 +60,11 @@ class FacturasEmitidasWindow(QMainWindow):
         self.service = FacturasEmitidasService(self.db)
 
         self._construir_ui()
+        # "Ver Cpbtes." de Totales del Día (pedido del usuario,
+        # 2026-08-19) abre este módulo ya filtrado desde esa fecha —
+        # sin `fecha_inicial`, arranca en hoy como siempre.
+        if fecha_inicial is not None:
+            self.fecha_desde.setDate(QDate(fecha_inicial.year, fecha_inicial.month, fecha_inicial.day))
         self._refrescar()
 
     # ------------------------------------------------------------------

@@ -88,6 +88,14 @@ FORMAS_PEDIDO = ["1-Personal", "2-Telefónico", "3-Mail", "4-Fax", "5-Otro"]
 FORMA_PEDIDO_DEFAULT_INDEX = 1  # "2-Telefónico" (CabFact.frm Form_Load: Combo4.ListIndex = 1)
 
 
+def _formatear_porcentaje(valor: Decimal) -> str:
+    """Un porcentaje de descuento sin ceros de relleno ("10" en vez de
+    "10,00") — mismo criterio que `EmiFact.frm`, que concatena
+    `Dtos(i2)` (un entero VB6) tal cual, no un importe formateado."""
+    texto = format_decimal(valor)
+    return texto[:-3] if texto.endswith(",00") else texto
+
+
 class FacturadorWindow(QMainWindow):
     TEXTO_BTN_ELEGIR_CLIENTE = "Elegir Cliente..."
     TEXTO_BTN_CAMBIAR_CLIENTE = "Cambiar Cliente"
@@ -420,19 +428,38 @@ class FacturadorWindow(QMainWindow):
     # ------------------------------------------------------------------
     # Totales (Pie)
     # ------------------------------------------------------------------
-    def _bonificacion_total(self) -> Decimal:
+    def _porcentajes_bonificacion(self, cod1: str) -> list[Decimal]:
+        """Porcentajes de descuento en cascada configurados para el
+        Cliente actual + esa Sección (`DtoXClte.DTO1..DTO5`, sólo los
+        no-nulos) — extraído de `_bonificacion_total` para reusarlo
+        también al armar el texto "%Descuento" por renglón del PDF
+        (réplica de `EmiFact.frm`, ver `pdf.generar_pdf_factura`)."""
         if self.cliente_actual is None:
-            return Decimal("0")
+            return []
+        fila_dto = self.repos.dtoxclte().by_cliente_seccion(self.cliente_actual.CODIGO, cod1)
+        if fila_dto is None:
+            return []
+        return [Decimal(p) for p in (fila_dto.DTO1, fila_dto.DTO2, fila_dto.DTO3, fila_dto.DTO4, fila_dto.DTO5) if p is not None]
+
+    def _bonificacion_total(self) -> Decimal:
         total = Decimal("0")
         for renglon in self.renglones:
-            fila_dto = self.repos.dtoxclte().by_cliente_seccion(self.cliente_actual.CODIGO, renglon.cod1)
-            if fila_dto is None:
+            porcentajes = self._porcentajes_bonificacion(renglon.cod1)
+            if not porcentajes:
                 continue
-            porcentajes = [
-                Decimal(p) for p in (fila_dto.DTO1, fila_dto.DTO2, fila_dto.DTO3, fila_dto.DTO4, fila_dto.DTO5) if p is not None
-            ]
             total += self.factura_service.calcular_bonificacion_cascada(renglon.importe, porcentajes)
         return total
+
+    def _descuentos_por_renglon(self) -> list[str]:
+        """Texto "%Descuento" por renglón, mismo formato que `EmiFact.frm`
+        (líneas 1044-1052): los porcentajes en cascada configurados para
+        ese Cliente/Sección, concatenados con "+" (ej. "10+5"), sin signo
+        "%" — vacío si no hay ninguno configurado."""
+        resultado = []
+        for renglon in self.renglones:
+            porcentajes = self._porcentajes_bonificacion(renglon.cod1)
+            resultado.append("+".join(_formatear_porcentaje(p) for p in porcentajes))
+        return resultado
 
     def _porcentaje_iibb(self) -> Decimal:
         try:
@@ -528,6 +555,8 @@ class FacturadorWindow(QMainWindow):
             QMessageBox.critical(self, "Facturador", f"Error al conectar con AFIP:\n{exc}")
             return
 
+        descuentos_renglones = self._descuentos_por_renglon()
+
         try:
             datos_borrador = DatosFacturaPDF(
                 letra=letra,
@@ -540,6 +569,7 @@ class FacturadorWindow(QMainWindow):
                 cliente_civa=self.cliente_actual.CIVA or 0,
                 cliente_domicilio=(self.cliente_actual.DIR or "").strip(),
                 renglones=list(self.renglones),
+                descuentos_renglones=descuentos_renglones,
                 total=total,
                 en_dolares=self.chk_en_dolares.isChecked(),
             )
@@ -635,6 +665,7 @@ class FacturadorWindow(QMainWindow):
                 cliente_civa=self.cliente_actual.CIVA or 0,
                 cliente_domicilio=(self.cliente_actual.DIR or "").strip(),
                 renglones=list(self.renglones),
+                descuentos_renglones=descuentos_renglones,
                 total=total,
                 cae=resultado_cae.cae,
                 cae_vencimiento=resultado_cae.vencimiento,
@@ -661,7 +692,7 @@ class FacturadorWindow(QMainWindow):
             "pdf": ruta_pdf,
         }
 
-        mensaje_pdf = f"\nPDF: {ruta_pdf}" if ruta_pdf else "\n(el PDF no se pudo generar, ver aviso anterior)"
+        mensaje_pdf = "\nPDF: se muestra a continuación para imprimir." if ruta_pdf else "\n(el PDF no se pudo generar, ver aviso anterior)"
         QMessageBox.information(
             self,
             "Facturador",
@@ -669,6 +700,19 @@ class FacturadorWindow(QMainWindow):
             f"CAE: {resultado_cae.cae}\nVencimiento: {resultado_cae.vencimiento}\nTotal: $ {format_decimal(total.total)}"
             f"{mensaje_pdf}",
         )
+        # Muestra el PDF final (ya con CAE/QR reales) para que el
+        # operador pueda imprimirlo (feedback del usuario, 2026-08-19:
+        # "Después de grabar la factura, muestre el pdf final en
+        # pantalla para que el operador pueda imprimirla") — mismo
+        # visor que el boceto (`PdfPreviewDialog`, con Zoom/Imprimir...),
+        # ahora sin el botón "Grabar" (`mostrar_boton_grabar=False`): ya
+        # se grabó, esto es sólo para mirar/imprimir.
+        if ruta_pdf is not None:
+            PdfPreviewDialog(
+                ruta_pdf,
+                titulo=f"Factura {letra} {punto_venta:04d}-{numero:08d} — CAE {resultado_cae.cae}",
+                parent=self,
+            ).exec()
         self._nueva_factura()
 
     # ------------------------------------------------------------------

@@ -76,11 +76,37 @@ class TotalDiarioDetalleDialog(QDialog):
         layout.addWidget(tabs)
 
         fila_botones = QHBoxLayout()
+        # "Ver Cpbtes." abajo a la izquierda (pedido del usuario,
+        # 2026-08-19) — apunta a "Facturas Emitidas" ya filtrado desde
+        # este día. Novedad respecto del legacy (`TotFact.frm` no tenía
+        # este cruce), confirmado explícitamente por el usuario como
+        # mejora deliberada.
+        btn_ver_cpbtes = QPushButton("Ver Cpbtes.")
+        btn_ver_cpbtes.clicked.connect(self._on_ver_cpbtes)
+        fila_botones.addWidget(btn_ver_cpbtes)
         fila_botones.addStretch()
         btn_cerrar = QPushButton("Cerrar")
         btn_cerrar.clicked.connect(self.accept)
         fila_botones.addWidget(btn_cerrar)
         layout.addLayout(fila_botones)
+
+    def _on_ver_cpbtes(self) -> None:
+        """Cierra este diálogo (es modal — una ventana nueva abierta
+        mientras sigue `exec()`'do quedaría inutilizable hasta cerrarlo,
+        mismo motivo que en `SaldosClientesDialog`) y abre "Facturas
+        Emitidas" filtrado desde la fecha de este día. Se parenta a la
+        ventana de Totales Diarios (que sigue abierta detrás) para que
+        Qt la mantenga viva mientras esa ventana exista — mismo patrón
+        que el resto de la app usa para sub-ventanas (`ClienteBusquedaWindow`
+        `parent=self`, etc.)."""
+        from .facturas_emitidas_window import FacturasEmitidasWindow
+
+        fecha = self.detalle.totales.FECHA
+        if fecha is None:
+            return
+        padre = self.parent()
+        self.accept()
+        FacturasEmitidasWindow(parent=padre, fecha_inicial=fecha).show()
 
     # ------------------------------------------------------------------
     def _tab_importes(self) -> QWidget:

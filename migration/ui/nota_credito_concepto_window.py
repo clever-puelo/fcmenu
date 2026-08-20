@@ -82,21 +82,15 @@ from migration.services import (
 )
 
 from .cliente_busqueda_window import ClienteBusquedaWindow
+from .comprobante_aplicar_dialog import ComprobanteAplicarDialog
 from .decimals import format_decimal
 from .nota_cliente_dialog import NotaClienteDialog
-from .widgets import MontoLineEdit, TablaBusqueda, UpperCaseLineEdit, crear_recuadro_destacado, redimensionar_pct_pantalla
+from .widgets import MontoLineEdit, UpperCaseLineEdit, crear_recuadro_destacado, redimensionar_pct_pantalla
 
 CUIT_EMISOR_DEFAULT = "33703467909"  # ídem FacturadorWindow, ver ese docstring
 
 TIPO_NC = 2
 TIPO_ND = 3
-
-COL_COMPROBANTE = 0
-COL_TIPO = 1
-COL_FECHA = 2
-COL_FECVTO = 3
-COL_DEBE = 4
-COLUMNAS_PENDIENTES = ["Comprobante", "Tipo", "Fecha", "Fec.Vto.", "Debe"]
 
 
 class NotaCreditoConceptoWindow(QMainWindow):
@@ -127,6 +121,10 @@ class NotaCreditoConceptoWindow(QMainWindow):
         self.cliente_actual: Optional[Cliente] = None
         self.tiene_nota_cliente = False
         self._usuario = os.environ.get("USERNAME", "SISTEMA")[:6]
+        # Comprobante elegido en la ventana flotante "Aplicar a" (ver
+        # `ComprobanteAplicarDialog`) — reemplaza la tabla completa que
+        # antes vivía siempre visible (feedback del usuario, 2026-08-19).
+        self._comprobante_seleccionado: Optional[Ctascte] = None
 
         self._construir_ui()
         self._poblar_motivos()
@@ -150,6 +148,10 @@ class NotaCreditoConceptoWindow(QMainWindow):
         grupo = QGroupBox("Cabecera")
         layout = QVBoxLayout(grupo)
 
+        # "Nota Clte."/"Nueva" subidos a esta línea, junto a los radios
+        # de Tipo (feedback del usuario, 2026-08-19: "subir los botones
+        # nota clte y nueva a la linea de NCredito y nDeb.") — el lugar
+        # que dejan libre en `fila_cliente` lo ocupa "Aplicar a".
         fila_tipo = QHBoxLayout()
         self.radio_nc = QRadioButton("Nota de Crédito")
         self.radio_nd = QRadioButton("Nota de Débito")
@@ -164,21 +166,30 @@ class NotaCreditoConceptoWindow(QMainWindow):
         fila_tipo.addWidget(self.radio_nc)
         fila_tipo.addWidget(self.radio_nd)
         fila_tipo.addStretch()
+        self.btn_nota_cliente = QPushButton("Nota Clte.")
+        self.btn_nota_cliente.setEnabled(False)
+        self.btn_nota_cliente.clicked.connect(self._on_nota_cliente)
+        fila_tipo.addWidget(self.btn_nota_cliente)
+        self.btn_nueva = QPushButton("Nueva")
+        self.btn_nueva.clicked.connect(self._nueva)
+        fila_tipo.addWidget(self.btn_nueva)
         layout.addLayout(fila_tipo)
 
+        # "Aplicar a" ocupa el lugar que dejaron libres "Nota Clte."/
+        # "Nueva" en esta línea — abre la ventana flotante de selección
+        # de Factura/ND a cancelar (`ComprobanteAplicarDialog`), sólo
+        # visible/habilitado para Nota de Crédito (Nota de Débito no
+        # imputa nada, ver docstring del módulo).
         fila_cliente = QHBoxLayout()
         self.btn_elegir_cliente = QPushButton(self.TEXTO_BTN_ELEGIR_CLIENTE)
         self.btn_elegir_cliente.clicked.connect(self._on_elegir_cliente)
         fila_cliente.addWidget(self.btn_elegir_cliente)
         self.lbl_cliente = QLabel("(sin cliente elegido)")
         fila_cliente.addWidget(self.lbl_cliente, stretch=1)
-        self.btn_nota_cliente = QPushButton("Nota Clte.")
-        self.btn_nota_cliente.setEnabled(False)
-        self.btn_nota_cliente.clicked.connect(self._on_nota_cliente)
-        fila_cliente.addWidget(self.btn_nota_cliente)
-        self.btn_nueva = QPushButton("Nueva")
-        self.btn_nueva.clicked.connect(self._nueva)
-        fila_cliente.addWidget(self.btn_nueva)
+        self.btn_aplicar_a = QPushButton("Aplicar a...")
+        self.btn_aplicar_a.setEnabled(False)
+        self.btn_aplicar_a.clicked.connect(self._on_aplicar_a)
+        fila_cliente.addWidget(self.btn_aplicar_a)
         layout.addLayout(fila_cliente)
 
         fila_datos = QHBoxLayout()
@@ -204,44 +215,47 @@ class NotaCreditoConceptoWindow(QMainWindow):
             self.combo_motivo.addItem(f"{cod} - {fila.DESCRI or ''}", int(cod))
 
     # ------------------------------------------------------------------
-    # Comprobante a Imputar (sólo Nota de Crédito)
+    # Comprobante a Imputar (sólo Nota de Crédito) — panel achicado
+    # (feedback del usuario, 2026-08-19: "El panel comprobantes a
+    # imputar achicarlo y colocar el cpbte. seleccionado"), la selección
+    # en sí ahora vive en la ventana flotante `ComprobanteAplicarDialog`
+    # (botón "Aplicar a...", ver `_armar_cabecera`/`_on_aplicar_a`).
     # ------------------------------------------------------------------
     def _armar_comprobante_imputar(self) -> QGroupBox:
-        self.grupo_imputar = QGroupBox(
-            "Comprobante a Imputar — elegí la Factura/Nota de Débito que esta Nota de Crédito cancela"
-        )
-        layout = QVBoxLayout(self.grupo_imputar)
-        self.tabla_pendientes = TablaBusqueda(COLUMNAS_PENDIENTES, columnas_derecha=(COL_COMPROBANTE, COL_DEBE))
-        self.tabla_pendientes.itemSelectionChanged.connect(self._recalcular_totales)
-        layout.addWidget(self.tabla_pendientes)
+        self.grupo_imputar = QGroupBox("Comprobante a Imputar")
+        layout = QHBoxLayout(self.grupo_imputar)
+        self.lbl_comprobante_imputar = QLabel("(sin comprobante seleccionado — usá \"Aplicar a...\")")
+        layout.addWidget(self.lbl_comprobante_imputar, stretch=1)
         return self.grupo_imputar
 
-    def _cargar_pendientes(self) -> None:
-        if self.cliente_actual is None:
-            self.tabla_pendientes.cargar_filas([])
+    def _refrescar_panel_comprobante(self) -> None:
+        comprobante = self._comprobante_seleccionado
+        if comprobante is None:
+            self.lbl_comprobante_imputar.setText('(sin comprobante seleccionado — usá "Aplicar a...")')
             return
-        pendientes = self.cuenta_corriente_service.facturas_pendientes(self.cliente_actual.CODIGO)
-        filas = [
-            (
-                [
-                    f"{(p.PREFIJO or 0):04d}-{(p.CPBTE or 0):08d}",
-                    ETIQUETAS_TIPO_CTASCTE.get(p.TIPO, "—"),
-                    p.FECHA.strftime("%d/%m/%Y") if p.FECHA else "",
-                    p.FECVTO.strftime("%d/%m/%Y") if p.FECVTO else "",
-                    format_decimal(p.DEBE or Decimal("0")),
-                ],
-                p,
-            )
-            for p in pendientes
-        ]
-        self.tabla_pendientes.cargar_filas(filas)
+        etiqueta_tipo = ETIQUETAS_TIPO_CTASCTE.get(comprobante.TIPO, "—")
+        fecha_txt = comprobante.FECHA.strftime("%d/%m/%Y") if comprobante.FECHA else "—"
+        self.lbl_comprobante_imputar.setText(
+            f"{etiqueta_tipo} {(comprobante.PREFIJO or 0):04d}-{(comprobante.CPBTE or 0):08d} — {fecha_txt} — "
+            f"Importe sin aplicar: $ {format_decimal(comprobante.DEBE or Decimal('0'))}"
+        )
 
-    def _comprobante_a_imputar(self) -> Optional[Ctascte]:
-        return self.tabla_pendientes.objeto_seleccionado()
+    def _on_aplicar_a(self) -> None:
+        if self.cliente_actual is None:
+            return
+        elegido = ComprobanteAplicarDialog.elegir(
+            self.repos, self.cuenta_corriente_service, self.cliente_actual.CODIGO, parent=self
+        )
+        if elegido is None:
+            return
+        self._comprobante_seleccionado = elegido
+        self._refrescar_panel_comprobante()
+        self._recalcular_totales()
 
     def _on_tipo_cambiado(self) -> None:
         es_nc = self.radio_nc.isChecked()
         self.grupo_imputar.setVisible(es_nc)
+        self.btn_aplicar_a.setVisible(es_nc)
         self._refrescar_proximo_numero()
         self._recalcular_totales()
 
@@ -249,7 +263,8 @@ class NotaCreditoConceptoWindow(QMainWindow):
     # Conceptos (DetNC.frm — 3 renglones fijos)
     # ------------------------------------------------------------------
     def _armar_conceptos(self) -> QGroupBox:
-        grupo = QGroupBox("Conceptos (hasta 3 renglones, con importe y Con/Sin IVA cada uno)")
+        self.grupo_conceptos = QGroupBox("Conceptos (hasta 3 renglones, con importe y Con/Sin IVA cada uno)")
+        grupo = self.grupo_conceptos
         layout = QVBoxLayout(grupo)
         self.filas_concepto: list[tuple[UpperCaseLineEdit, MontoLineEdit, QCheckBox]] = []
         for indice in range(3):
@@ -332,19 +347,24 @@ class NotaCreditoConceptoWindow(QMainWindow):
 
     def _refrescar_cliente(self) -> None:
         cliente = self.cliente_actual
+        # Cambiar de Cliente invalida cualquier comprobante ya elegido
+        # en "Aplicar a..." (era de OTRO Cliente).
+        self._comprobante_seleccionado = None
+        self._refrescar_panel_comprobante()
         if cliente is None:
             self.lbl_cliente.setText("(sin cliente elegido)")
             self.btn_nota_cliente.setEnabled(False)
+            self.btn_aplicar_a.setEnabled(False)
             self.tiene_nota_cliente = False
             self.btn_nota_cliente.setStyleSheet("")
             self.btn_elegir_cliente.setText(self.TEXTO_BTN_ELEGIR_CLIENTE)
-            self._cargar_pendientes()
             self._refrescar_proximo_numero()
             self._recalcular_totales()
             return
 
         self.lbl_cliente.setText(f"{cliente.CODIGO} — {(cliente.NOMB or '').strip()} — CUIT {cliente.CUIT or 's/d'}")
         self.btn_nota_cliente.setEnabled(True)
+        self.btn_aplicar_a.setEnabled(True)
         self.btn_elegir_cliente.setText(self.TEXTO_BTN_CAMBIAR_CLIENTE)
 
         self._actualizar_boton_nota_cliente()
@@ -352,7 +372,6 @@ class NotaCreditoConceptoWindow(QMainWindow):
             NotaClienteDialog(self.repos, cliente.CODIGO, parent=self).exec()
             self._actualizar_boton_nota_cliente()
 
-        self._cargar_pendientes()
         self._refrescar_proximo_numero()
         self._recalcular_totales()
 
@@ -394,7 +413,18 @@ class NotaCreditoConceptoWindow(QMainWindow):
         except Exception:  # noqa: BLE001 — sólo informativo, no bloquea la carga
             self.lbl_proximo_numero.setText(f"Próx. Nº: (no disponible, Letra {letra})")
 
+    def _detalle_habilitado(self) -> bool:
+        """Nota de Crédito necesita el comprobante a imputar elegido
+        ANTES de poder cargar Conceptos (feedback del usuario,
+        2026-08-19: "Si no selecciona la factura o ND no habilite
+        detalle") — Nota de Débito no imputa nada, no tiene esa traba."""
+        if not self.radio_nc.isChecked():
+            return True
+        return self._comprobante_seleccionado is not None
+
     def _recalcular_totales(self) -> None:
+        self.grupo_conceptos.setEnabled(self._detalle_habilitado())
+
         conceptos = self._conceptos_actuales()
         civa = self.cliente_actual.CIVA if self.cliente_actual else 3
         total = self.nc_service.calcular_total(conceptos, civa_cliente=civa or 3)
@@ -404,9 +434,9 @@ class NotaCreditoConceptoWindow(QMainWindow):
         self.lbl_no_gravado.setText(f"$ {format_decimal(total.no_gravado)}")
         self.lbl_total.setText(f"$ {format_decimal(total.total)}")
 
-        habilitado = self.cliente_actual is not None and total.total > 0
+        habilitado = self.cliente_actual is not None and total.total > 0 and self._detalle_habilitado()
         if self.radio_nc.isChecked():
-            habilitado = habilitado and self._comprobante_a_imputar() is not None
+            habilitado = habilitado and self._comprobante_seleccionado is not None
         self.btn_emitir.setEnabled(habilitado)
 
     # ------------------------------------------------------------------
@@ -414,6 +444,7 @@ class NotaCreditoConceptoWindow(QMainWindow):
     # ------------------------------------------------------------------
     def _nueva(self) -> None:
         self.cliente_actual = None
+        self._comprobante_seleccionado = None
         for txt_desc, txt_importe, chk in getattr(self, "filas_concepto", []):
             txt_desc.clear()
             txt_importe.set_decimal(Decimal("0"))
@@ -438,7 +469,7 @@ class NotaCreditoConceptoWindow(QMainWindow):
             return
 
         tipo = self._tipo_actual()
-        comprobante_a_imputar = self._comprobante_a_imputar() if tipo == TIPO_NC else None
+        comprobante_a_imputar = self._comprobante_seleccionado if tipo == TIPO_NC else None
         if tipo == TIPO_NC and comprobante_a_imputar is None:
             QMessageBox.warning(self, "Nota de Crédito", "Elegí el comprobante contra el cual se imputa esta Nota de Crédito.")
             return

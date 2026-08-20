@@ -95,6 +95,12 @@ COLUMNAS = ["Sección", "Nro/Pulg", "Mtr/Kg", "MM", "Telas", "Descripción", "Ca
 # elegir un Artículo/Lote.
 COLUMNAS_SIEMPRE_BLOQUEADAS = {COL_IMPORTE, COL_LOTE}
 
+# Columnas numéricas — alineadas a la derecha (feedback del usuario,
+# 2026-08-19: "Ajustar a la derecha todos los campos numéricos") — Lote
+# y Descripción son texto libre, Sección es un código alfanumérico
+# ("**" para ítem libre), el resto siempre es una cantidad o un importe.
+COLUMNAS_NUMERICAS = {COL_POS1, COL_POS2, COL_POS3, COL_POS4, COL_POS6, COL_PRECIO, COL_IMPORTE}
+
 
 @dataclass
 class _EstadoFila:
@@ -202,8 +208,16 @@ class DetalleGrid(QTableWidget):
         item = self.item(fila, columna)
         if item is None:
             item = QTableWidgetItem()
+            self._aplicar_alineacion(item, columna)
             self.setItem(fila, columna, item)
         item.setText(texto)
+
+    @staticmethod
+    def _aplicar_alineacion(item: QTableWidgetItem, columna: int) -> None:
+        alineacion = Qt.AlignmentFlag.AlignVCenter | (
+            Qt.AlignmentFlag.AlignRight if columna in COLUMNAS_NUMERICAS else Qt.AlignmentFlag.AlignLeft
+        )
+        item.setTextAlignment(alineacion)
 
     def _set_editable(self, fila: int, columna: int, editable: bool) -> None:
         item = self.item(fila, columna)
@@ -266,6 +280,7 @@ class DetalleGrid(QTableWidget):
         try:
             for columna in range(len(COLUMNAS)):
                 item = QTableWidgetItem("")
+                self._aplicar_alineacion(item, columna)
                 self.setItem(fila, columna, item)
         finally:
             self._actualizando = False
@@ -321,7 +336,7 @@ class DetalleGrid(QTableWidget):
         if columna == COL_SECCION:
             self._on_seccion_editada(fila, self._texto(fila, columna))
         elif columna in (COL_POS1, COL_POS2, COL_POS3, COL_POS4, COL_POS6, COL_PRECIO):
-            self._reconsiderar_codigo_y_recalcular(fila)
+            self._reconsiderar_codigo_y_recalcular(fila, columna)
 
         self._al_cambiar()
 
@@ -331,6 +346,14 @@ class DetalleGrid(QTableWidget):
         if not texto:
             estado.seccion = None
             estado.articulo = None
+            # Bug real reportado por el usuario (2026-08-19): "si se
+            # cambia un ítem en el facturador no resetea el Despacho/
+            # Lote" — vaciar la Sección de un renglón ya cargado dejaba
+            # el Lote elegido para el Artículo ANTERIOR pegado en
+            # pantalla (y en `estado`), como si siguiera vigente para lo
+            # que se cargue después.
+            estado.nrodesp_elegido = None
+            self._limpiar_celda(fila, COL_LOTE)
             self._actualizar_editabilidad_fila(fila)
             return
 
@@ -347,9 +370,16 @@ class DetalleGrid(QTableWidget):
 
         estado.seccion = seccion
         estado.articulo = None
+        # Mismo motivo que el `if not texto:` de arriba: cambiar la
+        # Sección de un renglón ya resuelto invalida el Lote que se
+        # había elegido para el Artículo/Sección anterior — se limpia
+        # acá mismo, antes de que se complete el código nuevo (que recién
+        # va a volver a pedir Lote si corresponde, vía `_aplicar_articulo`).
+        estado.nrodesp_elegido = None
         self._actualizando = True
         try:
             self._set_texto(fila, COL_SECCION, seccion.cod_seccion)
+            self._set_texto(fila, COL_LOTE, "")
         finally:
             self._actualizando = False
         self._actualizar_editabilidad_fila(fila)
@@ -386,7 +416,7 @@ class DetalleGrid(QTableWidget):
             self._actualizando = False
         self._actualizar_editabilidad_fila(fila)
 
-    def _reconsiderar_codigo_y_recalcular(self, fila: int) -> None:
+    def _reconsiderar_codigo_y_recalcular(self, fila: int, columna_editada: int) -> None:
         """Si se completaron todos los segmentos de código a mano (sin
         pasar por F2), intenta resolver el Artículo — mismo criterio que
         el botón "Buscar por Código" que tenía `RenglonDetalleDialog`,
@@ -394,6 +424,24 @@ class DetalleGrid(QTableWidget):
         estado = self._estado.get(fila)
         if estado is None or estado.seccion is None:
             return
+
+        columnas_codigo = {POSICION_A_COLUMNA[s.posicion] for s in estado.seccion.segmentos_codigo}
+        if columna_editada in columnas_codigo and (estado.articulo is not None or estado.nrodesp_elegido is not None):
+            # Bug real reportado por el usuario (2026-08-19): "si se
+            # cambia un ítem en el facturador no resetea el Despacho/
+            # Lote". El renglón ya tenía un Artículo (y quizás un Lote)
+            # resueltos, y el operador acaba de tocar a mano una celda
+            # de CÓDIGO (no de cantidad) — el Artículo/Lote viejos ya no
+            # son válidos para lo que se termine tipeando, así que se
+            # limpian ACÁ MISMO, no recién cuando (si) se resuelve un
+            # Artículo nuevo más abajo.
+            estado.articulo = None
+            estado.nrodesp_elegido = None
+            self._actualizando = True
+            try:
+                self._set_texto(fila, COL_LOTE, "")
+            finally:
+                self._actualizando = False
 
         if estado.articulo is None and estado.seccion.segmentos_codigo:
             valores = []

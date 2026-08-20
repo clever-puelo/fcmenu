@@ -854,6 +854,24 @@ class MainMenuWindow(QMainWindow):
         nombre_clase = type(ventana).__name__
         minimo = subventana.minimumSizeHint()
         if nombre_clase in MAXIMIZAR_AL_ABRIR_MDI:
+            # Antes de maximizar, se deja una geometría "restaurada"
+            # acotada al panel MDI real (feedback del usuario, 2026-08-19:
+            # "cuando se normalizan no se salen de cuadro... ahora son
+            # muy grandes") — bug real: sin este `resize()`/`move()` acá,
+            # Qt recuerda como geometría "restaurada" (a la que vuelve al
+            # des-maximizar) la que la propia `ventana` ya traía de su
+            # `__init__` (`redimensionar_pct_pantalla()`, calculada contra
+            # la PANTALLA física completa, mucho más grande que este panel
+            # MDI) — al des-maximizar, el tamaño restaurado se salía del
+            # cuadro. 85%×80% del panel real (mismo criterio de piso de
+            # `minimumSizeHint()` que el resto de esta función) deja
+            # margen para ver que sigue habiendo un panel MDI alrededor.
+            ancho_restaurado = max(round(area.width() * 0.85), minimo.width(), 300)
+            alto_restaurado = max(round(area.height() * 0.80), minimo.height(), 300)
+            subventana.resize(ancho_restaurado, alto_restaurado)
+            x = max((area.width() - subventana.width()) // 2, 0)
+            y = max((area.height() - subventana.height()) // 2, 0)
+            subventana.move(x, y)
             subventana.showMaximized()
             return
         if nombre_clase == "ListadosWindow":
