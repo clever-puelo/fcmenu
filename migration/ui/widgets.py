@@ -68,7 +68,10 @@ from __future__ import annotations
 
 import re
 from decimal import Decimal, InvalidOperation
-from typing import Any, Optional
+from typing import TYPE_CHECKING, Any, Optional
+
+if TYPE_CHECKING:
+    from migration.models import Cliente
 
 from PyQt6.QtCore import QDate, QEvent, QObject, Qt, QTimer
 from PyQt6.QtGui import QGuiApplication, QKeyEvent
@@ -154,6 +157,53 @@ def crear_recuadro_destacado(etiqueta: str, texto_valor: str = "$ 0,00") -> tupl
     lbl_valor.setStyleSheet("font-weight: bold; font-size: 12pt; border: none;")
     fila.addWidget(lbl_valor)
     return frame, lbl_valor
+
+
+def _formatear_localidad(cliente: "Cliente") -> str:
+    """"(CP) Localidad" — mismo formato que ya usaba
+    `factura_emitida_detalle_dialog.py` para su panel de Cliente, ahora
+    centralizado acá para reusarlo en los demás paneles de cliente."""
+    cp = (cliente.CP or "").strip()
+    loc = (cliente.LOC or "").strip()
+    if not cp and not loc:
+        return ""
+    return f"({cp}) {loc}".strip() if cp else loc
+
+
+def texto_contacto_cliente(cliente: "Cliente") -> str:
+    """"Localidad — Tel: … — Email: …" en una sola línea — pedido del
+    usuario (2026-08-20): que el operador vea los datos de contacto del
+    cliente sin recorrer varias pantallas, en Facturador/Recibo/Notas de
+    Crédito y Débito. Teléfono = `TEL1` únicamente (mismo criterio que
+    `CuentaCorrienteService.resumen_cliente()`, `TEL2` no se usa en
+    ningún lado del código). Partes vacías se omiten (nunca separadores
+    colgando); "—" si no hay ningún dato cargado."""
+    partes = [
+        p
+        for p in (
+            _formatear_localidad(cliente),
+            f"Tel: {(cliente.TEL1 or '').strip()}" if (cliente.TEL1 or "").strip() else "",
+            f"Email: {(cliente.EMAIL or '').strip()}" if (cliente.EMAIL or "").strip() else "",
+        )
+        if p
+    ]
+    return "   —   ".join(partes) if partes else "—"
+
+
+def texto_direccion_cliente(cliente: "Cliente") -> str:
+    """"Dirección — (CP) Localidad" — línea 2 del panel de cliente de
+    Cta.Cte. (pedido del usuario, 2026-08-20)."""
+    partes = [p for p in ((cliente.DIR or "").strip(), _formatear_localidad(cliente)) if p]
+    return "   —   ".join(partes) if partes else "—"
+
+
+def texto_telefono_email_cliente(cliente: "Cliente") -> str:
+    """"Tel: … — Email: …" — línea 3 del panel de cliente de Cta.Cte.
+    (pedido del usuario, 2026-08-20)."""
+    tel = (cliente.TEL1 or "").strip()
+    email = (cliente.EMAIL or "").strip()
+    partes = [p for p in (f"Tel: {tel}" if tel else "", f"Email: {email}" if email else "") if p]
+    return "   —   ".join(partes) if partes else "—"
 
 
 def crear_boton_hoy(campo: QDateEdit) -> QPushButton:

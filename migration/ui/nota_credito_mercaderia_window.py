@@ -75,7 +75,12 @@ from .cliente_busqueda_window import ClienteBusquedaWindow
 from .comprobante_aplicar_dialog import ComprobanteAplicarDialog
 from .decimals import format_decimal
 from .nota_cliente_dialog import NotaClienteDialog
-from .widgets import compactar_alto_filas, crear_recuadro_destacado, redimensionar_pct_pantalla
+from .widgets import (
+    compactar_alto_filas,
+    crear_recuadro_destacado,
+    redimensionar_pct_pantalla,
+    texto_contacto_cliente,
+)
 
 CUIT_EMISOR_DEFAULT = "33703467909"  # ídem FacturadorWindow
 TIPO_NC = 2
@@ -141,12 +146,14 @@ class NotaCreditoMercaderiaWindow(QMainWindow):
         grupo = QGroupBox("Cabecera — Nota de Crédito por Devolución de Mercadería")
         layout = QVBoxLayout(grupo)
 
+        # Código+nombre a la izquierda, botón cambiar-cliente a la
+        # derecha (antes de "Notas") — pedido del usuario, 2026-08-20.
         fila_cliente = QHBoxLayout()
+        self.lbl_cliente = QLabel("(sin cliente elegido)")
+        fila_cliente.addWidget(self.lbl_cliente, stretch=1)
         self.btn_elegir_cliente = QPushButton(self.TEXTO_BTN_ELEGIR_CLIENTE)
         self.btn_elegir_cliente.clicked.connect(self._on_elegir_cliente)
         fila_cliente.addWidget(self.btn_elegir_cliente)
-        self.lbl_cliente = QLabel("(sin cliente elegido)")
-        fila_cliente.addWidget(self.lbl_cliente, stretch=1)
         self.btn_nota_cliente = QPushButton("Nota Clte.")
         self.btn_nota_cliente.setEnabled(False)
         self.btn_nota_cliente.clicked.connect(self._on_nota_cliente)
@@ -155,6 +162,10 @@ class NotaCreditoMercaderiaWindow(QMainWindow):
         self.btn_nueva.clicked.connect(self._nueva)
         fila_cliente.addWidget(self.btn_nueva)
         layout.addLayout(fila_cliente)
+
+        # Localidad/Teléfono/Email del cliente elegido (ídem).
+        self.lbl_cliente_contacto = QLabel("—")
+        layout.addWidget(self.lbl_cliente_contacto)
 
         fila_factura = QHBoxLayout()
         fila_factura.addWidget(QLabel("Factura Original :"))
@@ -352,6 +363,7 @@ class NotaCreditoMercaderiaWindow(QMainWindow):
         self._refrescar_panel_comprobante()
         if cliente is None:
             self.lbl_cliente.setText("(sin cliente elegido)")
+            self.lbl_cliente_contacto.setText("—")
             self.btn_nota_cliente.setEnabled(False)
             self.btn_aplicar_a.setEnabled(False)
             self.tiene_nota_cliente = False
@@ -364,6 +376,7 @@ class NotaCreditoMercaderiaWindow(QMainWindow):
             return
 
         self.lbl_cliente.setText(f"{cliente.CODIGO} — {(cliente.NOMB or '').strip()} — CUIT {cliente.CUIT or 's/d'}")
+        self.lbl_cliente_contacto.setText(texto_contacto_cliente(cliente))
         self.btn_nota_cliente.setEnabled(True)
         self.btn_aplicar_a.setEnabled(True)
         self.btn_elegir_cliente.setText(self.TEXTO_BTN_CAMBIAR_CLIENTE)

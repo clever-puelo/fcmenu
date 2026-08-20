@@ -283,6 +283,14 @@ class ComprobanteZona:
     debe: Decimal
     dias_vencido: int  # 0 si no está vencido
     vencido: bool
+    # Campos crudos (pedido del usuario, 2026-08-20: "poder ver el
+    # comprobante al hacer click en la factura") — `letra`/`comprobante`
+    # de arriba ya vienen formateados para mostrar, no alcanzan para
+    # volver a buscar la `FcivaVta` (necesita TIPO+LETRA+PTOVTA+CPBTE
+    # crudos, mismo criterio que `FilaExtracto` de `ctacte_window.py`).
+    tipo: int = 0
+    prefijo: int = 0
+    cpbte: int = 0
 
 
 @dataclass
@@ -300,6 +308,64 @@ class CobranzasZona:
     clientes: list[ClienteZonaResumen]
     total_deuda: Decimal
     total_vencido: Decimal
+
+
+@dataclass
+class ComprobanteAplicadoRecibo:
+    """Un renglón de "Comprobantes Aplicados" del detalle de un Recibo —
+    de sólo lectura: `Imputacion` no guarda LETRA/PTOVTA del comprobante
+    original (sólo `CPBTEI`, ver `models.py` docstring de `Imputacion`),
+    así que no alcanza para volver a abrir el detalle de esa factura
+    desde acá."""
+
+    tipo_label: str
+    numero: str
+    fecha: Optional[date]
+    importe: Decimal
+
+
+@dataclass
+class FormaPagoRecibo:
+    """Un renglón de "Formas de Pago" del detalle de un Recibo —
+    Efectivo, Cheque, o una Retención/Tarjeta/Transferencia/Baja
+    Incobrable de `MovimVS`."""
+
+    forma: str
+    detalle: str
+    importe: Decimal
+
+
+@dataclass
+class DetalleRecibo:
+    """Detalle completo de un Recibo puntual, para `ReciboDetalleDialog`
+    — ver `CuentaCorrienteService.detalle_recibo()`."""
+
+    cliente: Cliente
+    numero: int
+    fecha: Optional[date]
+    total: Decimal
+    descuento: Decimal
+    anticipo: Decimal
+    aplicaciones: list[ComprobanteAplicadoRecibo]
+    formas_pago: list[FormaPagoRecibo]
+
+
+# Operación de `MovimVS.TIPREG` — mismo mapeo que `TIPOS_RETENCION` de
+# `migration/ui/pago_dialog.py` (Combo1 de `DetPago.frm`), duplicado a
+# propósito: este módulo de servicios no puede importar de `migration.ui`
+# (capa más baja). `TIPREG` es texto (ver docstring de `MovimVS`), se
+# comparan siempre stripeados.
+ETIQUETAS_TIPREG_MOVIMVS = {
+    "1": "Retenc.Gan.",
+    "2": "Retenc.IB",
+    "3": "Retenc.IVA",
+    "4": "Retenc.SUS",
+    "5": "Dep./Transf.",
+    "6": "Tarj.Déb/Cr.",
+    "7": "Cheques Vs.",
+    "8": "Cheq.Electr.",
+    "9": "Baja Incobr.",
+}
 
 
 class CuentaCorrienteService:
@@ -427,6 +493,9 @@ class CuentaCorrienteService:
                         debe=debe,
                         dias_vencido=dias_vencido,
                         vencido=vencido,
+                        tipo=m.TIPO or 0,
+                        prefijo=m.PREFIJO or 0,
+                        cpbte=m.CPBTE or 0,
                     )
                 )
                 subtotal_importe += importe
@@ -692,6 +761,75 @@ class CuentaCorrienteService:
         """Saldo de todos los clientes — réplica de `CtaCte.frm DoVer8`
         ("Ver Saldos"), ver `CtascteRepository.saldos_todos_clientes()`."""
         return self.repos.ctascte().saldos_todos_clientes()
+
+    def detalle_recibo(self, clte: int, numero: int) -> Optional[DetalleRecibo]:
+        """Detalle completo de un Recibo puntual — cabecera + Descuento/
+        Anticipo si los hubo + comprobantes que canceló + formas de pago
+        (Efectivo/Cheques/Retenciones) — para `ReciboDetalleDialog`
+        (pedido del usuario, 2026-08-20: ventana flotante "similar a la
+        de facturas" para ver el detalle de un Recibo desde el extracto
+        de Cta.Cte.). `None` si el cliente o la cabecera del Recibo no
+        existen."""
+        cliente = self.repos.cliente().by_codigo(clte)
+        if cliente is None:
+            return None
+
+        cabecera = self.repos.ctascte().by_cliente_tipo_cpbte(clte, EmisionReciboService.TIPO_RECIBO, numero)
+        if cabecera is None:
+            return None
+
+        descuento_fila = self.repos.ctascte().by_cliente_tipo_cpbte(clte, EmisionReciboService.TIPO_DESCUENTO, numero)
+        anticipo_fila = self.repos.ctascte().by_cliente_tipo_cpbte(clte, EmisionReciboService.TIPO_ANTICIPO, numero)
+
+        aplicaciones = [
+            ComprobanteAplicadoRecibo(
+                tipo_label=ETIQUETAS_TIPO_CTASCTE.get(
+                    int(i.TIPOI) if (i.TIPOI or "").strip().isdigit() else -1, "?"
+                ),
+                numero=str(i.CPBTEI or 0),
+                fecha=i.FECHAI,
+                importe=i.IMPTE or Decimal("0"),
+            )
+            for i in self.repos.imputacion().by_recibo(clte, str(EmisionReciboService.TIPO_RECIBO), numero)
+        ]
+
+        formas_pago: list[FormaPagoRecibo] = []
+
+        efectivo = self.repos.efectivo().by_comprobante(numero, tipo=EmisionReciboService.TIPO_EFECTIVO_MOVIMVS)
+        if efectivo is not None and (efectivo.IMPTE or Decimal("0")) > 0:
+            formas_pago.append(FormaPagoRecibo(forma="Efectivo", detalle="", importe=efectivo.IMPTE or Decimal("0")))
+
+        for cheque in self.repos.cheque().by_recibo(numero):
+            banco = self.repos.banco().by_cod(int(cheque.BCOSUC)) if cheque.BCOSUC else None
+            nombre_banco = f"{cheque.BCOSUC} - {(banco.NOMBRE or '').strip()}" if banco else str(cheque.BCOSUC or "—")
+            formas_pago.append(
+                FormaPagoRecibo(
+                    forma="Cheque",
+                    detalle=f"Nº {cheque.NROCHEQ} — {nombre_banco}",
+                    importe=cheque.IMPORTE or Decimal("0"),
+                )
+            )
+
+        for mov in self.repos.movimvs().by_comprobante(numero, tipo=str(EmisionReciboService.TIPO_EFECTIVO_MOVIMVS)):
+            tipreg = (mov.TIPREG or "").strip()
+            formas_pago.append(
+                FormaPagoRecibo(
+                    forma=ETIQUETAS_TIPREG_MOVIMVS.get(tipreg, f"Op. {tipreg or '?'}"),
+                    detalle=(mov.CONCEP or mov.OBSERV or "").strip(),
+                    importe=mov.IMPTE or Decimal("0"),
+                )
+            )
+
+        return DetalleRecibo(
+            cliente=cliente,
+            numero=numero,
+            fecha=cabecera.FECHA,
+            total=cabecera.IMPTE or Decimal("0"),
+            descuento=(descuento_fila.IMPTE or Decimal("0")) if descuento_fila else Decimal("0"),
+            anticipo=(anticipo_fila.IMPTE or Decimal("0")) if anticipo_fila else Decimal("0"),
+            aplicaciones=aplicaciones,
+            formas_pago=formas_pago,
+        )
 
 
 # ---------------------------------------------------------------------------

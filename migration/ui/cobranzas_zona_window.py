@@ -33,6 +33,7 @@ from migration.decimals import format_decimal
 from migration.repository import RepositoryFactory
 from migration.services import CuentaCorrienteService
 
+from .factura_emitida_detalle_dialog import FacturaEmitidaDetalleDialog
 from .procesando_dialog import ejecutar_con_progreso
 from .widgets import redimensionar_pct_pantalla
 
@@ -87,6 +88,10 @@ class CobranzasZonaWindow(QMainWindow):
         self.arbol.setColumnCount(len(COLUMNAS))
         self.arbol.setHeaderLabels(COLUMNAS)
         self.arbol.setSortingEnabled(True)
+        # Ver el comprobante al hacer clic en una fila de Factura/ND
+        # (pedido del usuario, 2026-08-20) — mismo patrón que
+        # `ctacte_window._on_click_fila_extracto`.
+        self.arbol.itemClicked.connect(self._on_click_item)
         layout.addWidget(self.arbol, stretch=1)
 
         fila_totales = QHBoxLayout()
@@ -189,6 +194,9 @@ class CobranzasZonaWindow(QMainWindow):
                 if comp.vencido:
                     for col in range(len(COLUMNAS)):
                         item_comp.setForeground(col, COLOR_VENCIDO)
+                # Guardado para el clic (ver `_on_click_item`) — sólo las
+                # filas de comprobante lo tienen, las de cliente no.
+                item_comp.setData(0, Qt.ItemDataRole.UserRole, comp)
                 item_cliente.addChild(item_comp)
 
             self.arbol.addTopLevelItem(item_cliente)
@@ -200,6 +208,15 @@ class CobranzasZonaWindow(QMainWindow):
 
         self.lbl_total_deuda.setText(format_decimal(resultado.total_deuda))
         self.lbl_total_vencido.setText(format_decimal(resultado.total_vencido))
+
+    def _on_click_item(self, item: QTreeWidgetItem, column: int) -> None:
+        comp = item.data(0, Qt.ItemDataRole.UserRole)
+        if comp is None:
+            return  # fila de Cliente (subtotal), no de comprobante
+        factura = self.repos.fciva_vta().by_comprobante(str(comp.tipo), comp.letra, comp.prefijo, comp.cpbte)
+        if factura is None:
+            return
+        FacturaEmitidaDetalleDialog(self.repos, factura, parent=self).exec()
 
     # ------------------------------------------------------------------
     def closeEvent(self, event) -> None:  # noqa: N802 (Qt override)

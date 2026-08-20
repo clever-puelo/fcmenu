@@ -13,8 +13,9 @@ from decimal import Decimal
 import pytest
 from pypdf import PdfReader
 
+from migration.decimals import format_decimal
 from migration.models import Ctascte
-from migration.pdf import DatosFacturaPDF, DatosReciboPDF, generar_pdf_factura, generar_pdf_recibo
+from migration.pdf import DatosFacturaPDF, DatosReciboPDF, generar_pdf_factura, generar_pdf_listado, generar_pdf_recibo
 from migration.services import AplicacionPago, PagoCheque, PagoRetencion, RenglonEmision, TotalFactura
 
 
@@ -230,3 +231,98 @@ class TestGenerarPdfRecibo:
         )
         assert ruta.exists()
         assert ruta.read_bytes()[:4] == b"%PDF"
+
+
+# ---------------------------------------------------------------------------
+# generar_pdf_listado (migración de Listados.frm) — pedido del usuario,
+# 2026-08-20: título+fecha y "Hoja N de M" en cada hoja, "Viene"/
+# "Transporte" entre hojas, totales en recuadro bajo su columna, cantidad
+# de renglones impresos.
+# ---------------------------------------------------------------------------
+
+
+class TestGenerarPdfListado:
+    def test_reporte_de_una_sola_hoja_sin_totales(self, tmp_path):
+        ruta = generar_pdf_listado(
+            titulo="Clientes", subtitulo="Todos",
+            columnas=["Cód.", "Nombre"],
+            filas=[["1", "Cliente Uno"], ["2", "Cliente Dos"]],
+            columnas_derecha=(0,),
+            directorio_salida=tmp_path,
+        )
+        assert ruta.exists()
+        assert ruta.read_bytes()[:4] == b"%PDF"
+
+        texto = PdfReader(str(ruta)).pages[0].extract_text()
+        assert "ALESTEL SRL" in texto
+        assert "Clientes" in texto
+        assert "Hoja 1 de 1" in texto
+        assert "2 renglones impresos" in texto
+
+    def test_reporte_vacio_no_rompe_y_muestra_cero_renglones(self, tmp_path):
+        ruta = generar_pdf_listado(
+            titulo="Vacío", subtitulo="Sin datos",
+            columnas=["Cód.", "Nombre"], filas=[],
+            directorio_salida=tmp_path,
+        )
+        texto = PdfReader(str(ruta)).pages[0].extract_text()
+        assert "0 renglones impresos" in texto
+
+    def test_un_solo_renglon_no_pluraliza(self, tmp_path):
+        ruta = generar_pdf_listado(
+            titulo="Uno", subtitulo="Un renglón",
+            columnas=["Cód.", "Nombre"], filas=[["1", "Único"]],
+            directorio_salida=tmp_path,
+        )
+        texto = PdfReader(str(ruta)).pages[0].extract_text()
+        assert "1 renglón impreso" in texto
+        assert "renglones" not in texto
+
+    def test_pie_se_dibuja_en_la_ultima_hoja_bajo_su_columna(self, tmp_path):
+        ruta = generar_pdf_listado(
+            titulo="Con Total", subtitulo="Prueba",
+            columnas=["Cód.", "Nombre", "Importe"],
+            filas=[["1", "A", "100,00"], ["2", "B", "200,00"]],
+            columnas_derecha=(0, 2),
+            pie=[("Total", "$ 300,00", 2)],
+            directorio_salida=tmp_path,
+        )
+        texto = PdfReader(str(ruta)).pages[0].extract_text()
+        assert "Total" in texto
+        assert "$ 300,00" in texto
+
+    def test_reporte_largo_pagina_con_viene_y_transporte(self, tmp_path):
+        """79 renglones fuerzan varias hojas — confirma que cada hoja
+        intermedia arranca con "Viene" y termina con "Transporte", que
+        acumulan correctamente, y que el total de la última hoja coincide
+        con el total general (mismo criterio contable confirmado con el
+        usuario: "Viene de hoja anterior" / "Pasa a hoja siguiente")."""
+        filas = [[str(i), f"Cliente {i}", format_decimal(i * 10)] for i in range(1, 80)]
+        valores = [Decimal(i * 10) for i in range(1, 80)]
+        total = sum(valores, Decimal("0"))
+
+        ruta = generar_pdf_listado(
+            titulo="Prueba Larga", subtitulo="79 renglones",
+            columnas=["Cód.", "Nombre", "Importe"],
+            filas=filas, columnas_derecha=(0, 2),
+            columna_transporte=2, valores_transporte=valores,
+            pie=[("Total", f"$ {format_decimal(total)}", 2)],
+            directorio_salida=tmp_path,
+        )
+        reader = PdfReader(str(ruta))
+        assert len(reader.pages) > 1
+
+        primera = reader.pages[0].extract_text()
+        ultima = reader.pages[-1].extract_text()
+        assert "Viene" not in primera  # la primera hoja no "viene" de ninguna
+        assert "Transporte" in primera  # pero sí pasa a la siguiente
+        assert "Viene" in ultima  # la última "viene" de las anteriores
+        assert "Transporte" not in ultima  # y no pasa a ninguna otra
+        assert f"$ {format_decimal(total)}" in ultima  # el total general
+        assert "79 renglones impresos" in ultima
+
+        # Todas las hojas repiten encabezado, fecha, y "Hoja N de M".
+        for i, pagina in enumerate(reader.pages, start=1):
+            texto = pagina.extract_text()
+            assert "ALESTEL SRL" in texto
+            assert f"Hoja {i} de {len(reader.pages)}" in texto

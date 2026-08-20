@@ -60,6 +60,7 @@ from migration.services import RenglonEmision, TotalFactura
 
 from .cliente_detalle_dialog import CIVA_OPCIONES
 from .factura_detalle_dialog import construir_grupo_renglones
+from .widgets import crear_recuadro_destacado
 from .pdf_preview_dialog import PdfPreviewDialog
 
 CIVA_LABELS = dict(CIVA_OPCIONES)
@@ -110,6 +111,7 @@ class FacturaEmitidaDetalleDialog(QDialog):
             construir_grupo_renglones(self.repos, self.factura, filas_visibles=FILAS_VISIBLES_DETALLE),
             stretch=1,
         )
+        layout.addWidget(self._armar_totales())
 
         fila_botones = QHBoxLayout()
         fila_botones.addStretch()
@@ -129,7 +131,20 @@ class FacturaEmitidaDetalleDialog(QDialog):
 
         codigo = c.CODIGO if c else f.CLTE
         nombre = ((c.NOMB if c else f.NOMB) or "").strip()
-        layout.addLayout(_fila(("Código :", str(codigo or "")), ("Nombre :", nombre)))
+        # Tel./Email en la línea del nombre (pedido del usuario,
+        # 2026-08-20) — igual que Dirección/Localidad más abajo, sólo
+        # están disponibles con Cliente real (el snapshot de FCIVAVTA no
+        # los guarda).
+        telefono = (c.TEL1 or "").strip() if c is not None else ""
+        email = (c.EMAIL or "").strip() if c is not None else ""
+        layout.addLayout(
+            _fila(
+                ("Código :", str(codigo or "")),
+                ("Nombre :", nombre),
+                ("Tel. :", telefono),
+                ("Email :", email),
+            )
+        )
 
         if c is not None:
             direccion = (c.DIR or "").strip()
@@ -174,26 +189,33 @@ class FacturaEmitidaDetalleDialog(QDialog):
         )
         # Ítems/Unids. en la misma línea, abajo (ídem).
         layout.addLayout(_fila(("Ítems :", str(f.ITEMS or 0)), ("Unids. :", str(f.TOTCAN or 0))))
+        return grupo
 
+    def _armar_totales(self) -> QGroupBox:
+        """Panel "Totales" nuevo, entre el Detalle y los botones (pedido
+        del usuario, 2026-08-20: sacar los importes del panel
+        "Comprobante" — que queda achicado a Número/Fecha/Ítems/Unids. —
+        y ponerlos acá, con el Tot. Neto resaltado en un recuadro a la
+        derecha, mismo patrón que el TOTAL de `FacturadorWindow`)."""
         total = self._total_factura()
-        # Los 4 importes en una sola línea, abajo de Ítems (ídem).
-        fila_importes = QHBoxLayout()
-        for etiqueta, valor, resaltado in (
-            ("Tot. Bruto :", total.neto_gravado, False),
-            ("IVA Ins. :", total.iva, False),
-            ("I.B. Bs.As. :", total.percepcion_iibb, False),
-            ("Tot. Neto :", total.total, True),
+        grupo = QGroupBox("Totales")
+        layout = QHBoxLayout(grupo)
+
+        for etiqueta, valor in (
+            ("Tot. Bruto :", total.neto_gravado),
+            ("IVA Ins. :", total.iva),
+            ("I.B. Bs.As. :", total.percepcion_iibb),
         ):
             lbl_etiqueta = QLabel(etiqueta)
             lbl_etiqueta.setStyleSheet("font-weight: bold;")
-            fila_importes.addWidget(lbl_etiqueta)
-            lbl_valor = QLabel(f"$ {format_decimal(valor)}")
-            if resaltado:
-                lbl_valor.setStyleSheet("font-weight: bold;")
-            fila_importes.addWidget(lbl_valor)
-            fila_importes.addSpacing(16)
-        fila_importes.addStretch()
-        layout.addLayout(fila_importes)
+            layout.addWidget(lbl_etiqueta)
+            layout.addWidget(QLabel(f"$ {format_decimal(valor)}"))
+            layout.addSpacing(16)
+        layout.addStretch()
+
+        recuadro_total, lbl_total = crear_recuadro_destacado("Tot. Neto:")
+        lbl_total.setText(f"$ {format_decimal(total.total)}")
+        layout.addWidget(recuadro_total)
         return grupo
 
     # ------------------------------------------------------------------

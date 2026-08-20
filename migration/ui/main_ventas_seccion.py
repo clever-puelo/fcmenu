@@ -11,6 +11,7 @@ import sys
 
 from PyQt6.QtWidgets import QApplication
 
+from .iconos import icono
 from .ventas_seccion_window import VentasSeccionWindow
 from .theme import aplicar_tema
 
@@ -19,6 +20,7 @@ def main() -> int:
     app = QApplication(sys.argv)
     aplicar_tema(app)
     ventana = VentasSeccionWindow()
+    ventana.setWindowIcon(icono("ventas", 32))
     ventana.show()
     return app.exec()
 

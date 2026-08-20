@@ -12,6 +12,7 @@ import sys
 from PyQt6.QtWidgets import QApplication
 
 from .arreglo_subdiario_window import ArregloSubdiarioWindow
+from .iconos import icono
 from .theme import aplicar_tema
 
 
@@ -19,6 +20,7 @@ def main() -> int:
     app = QApplication(sys.argv)
     aplicar_tema(app)
     ventana = ArregloSubdiarioWindow()
+    ventana.setWindowIcon(icono("arreglos", 32))
     ventana.show()
     return app.exec()
 

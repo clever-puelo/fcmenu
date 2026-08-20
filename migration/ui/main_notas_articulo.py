@@ -14,6 +14,7 @@ from PyQt6.QtWidgets import QApplication
 from migration.db import get_session
 from migration.repository import RepositoryFactory
 
+from .iconos import icono
 from .nota_articulo_dialog import NotaArticuloDialog
 from .theme import aplicar_tema
 
@@ -25,6 +26,7 @@ def main() -> int:
     aplicar_tema(app)
     db = get_session()
     dialogo = NotaArticuloDialog(RepositoryFactory(db), cod1, cod2)
+    dialogo.setWindowIcon(icono("notas", 32))
     dialogo.show()
     resultado = app.exec()
     db.close()

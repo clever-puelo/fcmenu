@@ -28,14 +28,13 @@ from reportlab.graphics import renderPDF
 from reportlab.graphics.barcode import qr
 from reportlab.graphics.shapes import Drawing
 from reportlab.lib import colors
-from reportlab.lib.enums import TA_CENTER, TA_LEFT, TA_RIGHT
 from reportlab.lib.pagesizes import A4, landscape
-from reportlab.lib.styles import ParagraphStyle, getSampleStyleSheet
 from reportlab.lib.units import mm
 from reportlab.pdfgen import canvas
-from reportlab.platypus import Paragraph, SimpleDocTemplate, Spacer, Table, TableStyle
+from reportlab.platypus import PageBreak, SimpleDocTemplate, Table, TableStyle
 
 from .decimals import format_decimal
+from .fechas import formatear_fecha_corta
 from .repository import ETIQUETAS_TIPO_CTASCTE
 from .services import AplicacionPago, PagoCheque, PagoRetencion, RenglonEmision, TotalFactura
 
@@ -433,13 +432,21 @@ def generar_pdf_recibo(datos: DatosReciboPDF, directorio_salida: Optional[Path] 
 # genérico de tabla paginada, reusado por los ~13 reportes en vez de
 # repetir el dibujo manual con `canvas` de arriba: acá la mayoría de las
 # columnas del legacy no importan (fuentes/anchos del RTF de VSPrinter),
-# lo único que hay que replicar fielmente son los datos/filtros — así
-# que se arma con Platypus (`SimpleDocTemplate`/`Table`), que pagina
-# solo, en vez de reimplementar el salto de página a mano como hacía
-# cada `Sub LisXxx` del legacy (`If Cont > NNNN Then ... NewPage`).
+# lo único que hay que replicar fielmente son los datos/filtros.
+#
+# **Paginado manual** (pedido del usuario, 2026-08-20 — título+fecha en
+# cada hoja, pie con nro. de hoja, "Viene/Transporte" entre hojas,
+# totales en recuadro bajo su columna, cantidad de renglones impresos):
+# antes se armaba una única `Table` gigante y se dejaba que Platypus
+# paginara solo (`repeatRows=1`), lo que alcanzaba para repetir el
+# encabezado de columnas pero no para dibujar título/fecha/pie en cada
+# hoja (Platypus sólo dibuja un flowable una vez) ni para insertar
+# "Viene"/"Transporte" exactamente en el corte de cada hoja (no hay forma
+# de saber de antemano dónde va a cortar Platypus). Acá se arma una
+# `Table` por cada bloque de filas que entra en una página (separadas por
+# `PageBreak()`), y el encabezado/pie de página los dibuja `_NumberedCanvas`
+# directo con `canvas`, en cada hoja.
 # ---------------------------------------------------------------------
-
-_ESTILOS = getSampleStyleSheet()
 
 
 def generar_pdf_listado(
@@ -449,89 +456,253 @@ def generar_pdf_listado(
     columnas: list[str],
     filas: list[list[str]],
     columnas_derecha: tuple[int, ...] = (),
-    pie: Optional[list[tuple[str, str]]] = None,
+    pie: Optional[list[tuple[str, str, int]]] = None,
+    columna_transporte: Optional[int] = None,
+    valores_transporte: Optional[list[Decimal]] = None,
     apaisado: bool = True,
     nombre_archivo: str = "listado.pdf",
     directorio_salida: Optional[Path] = None,
 ) -> Path:
-    """Genera un PDF tabular genérico (título + subtítulo + tabla +
-    totales opcionales al pie) — reusado por todos los listados de
-    `migration.services.ListadosService`.
+    """Genera un PDF tabular genérico — reusado por todos los listados de
+    `migration.services.ListadosService`. En cada hoja: "ALESTEL SRL" +
+    fecha (`formatear_fecha_corta`) arriba, título+subtítulo centrados,
+    "Hoja N de M" centrado abajo de todo.
 
     `columnas_derecha`: índices de columna a alinear a la derecha
     (importes/cantidades), mismo criterio que `TablaBusqueda` en la UI.
-    `pie`: lista de (etiqueta, valor) para la fila de totales al final.
+
+    `pie`: lista de `(etiqueta, valor, columna)` para los totales finales
+    — `valor` ya formateado tal cual se quiere mostrar (con "$" si es un
+    importe, igual que antes; no todos los totales son un importe puro,
+    ej. "ND Rechazadas" de Comisiones combina cantidad + importe en un
+    solo texto). Cada uno se dibuja en un recuadro bajo SU columna real,
+    al pie de la tabla de la ÚLTIMA hoja (antes era una tablita aparte,
+    sin relación con la columna de importe).
+
+    `columna_transporte`/`valores_transporte` (opcionales — "cuando
+    corresponda": reportes sin una columna de importe corrida con
+    sentido de negocio, ej. listado de Clientes, no los pasan):
+    `valores_transporte` es paralelo a `filas` (un `Decimal` por fila).
+    Si se pasan ambos, cada hoja (salvo la primera) arranca con
+    "Viene: $X" (acumulado de hojas previas) y cada hoja (salvo la
+    última) termina con "Transporte: $Y" (acumulado hasta ahí) — el
+    total de la última hoja coincide con el total general.
+
+    Al final de la última hoja se agrega también, sola, la cantidad de
+    renglones impresos.
     """
     directorio = Path(directorio_salida) if directorio_salida is not None else DIR_SALIDA_DEFAULT
     directorio.mkdir(parents=True, exist_ok=True)
     ruta = directorio / nombre_archivo
 
     tamano_pagina = landscape(A4) if apaisado else A4
+    ancho_pagina, alto_pagina = tamano_pagina
+    margen = 12 * mm
+
+    # Alto reservado arriba/abajo para el encabezado/pie que dibuja
+    # `_NumberedCanvas` en cada hoja — pedido del usuario (2026-08-20,
+    # "agregar más renglones... que empiece 2mm después de los títulos y
+    # hasta 2mm antes del nro de hoja"): antes había un colchón mucho más
+    # generoso ahí (60pt/24pt) sin pedido explícito, que le sacaba
+    # renglones de más a cada hoja — ahora es sólo lo que ocupa el texto
+    # (empresa/fecha + título + subtítulo arriba; "Hoja N de M" abajo)
+    # más 2mm de aire antes de que arranque/termine la tabla de datos.
+    GAP_ENCABEZADO_PIE = 2 * mm
+    alto_texto_encabezado = 40  # empresa/fecha + título + subtítulo (ver `_dibujar_marco`)
+    alto_texto_pie = 10  # una línea de 8pt ("Hoja N de M")
+    alto_encabezado = alto_texto_encabezado + GAP_ENCABEZADO_PIE
+    alto_pie = alto_texto_pie + GAP_ENCABEZADO_PIE
+    top_margin = margen + alto_encabezado
+    bottom_margin = margen + alto_pie
+
+    num_columnas = len(columnas)
+    ancho_util = ancho_pagina - 2 * margen
+
+    def _estilo_base() -> list[tuple]:
+        # Ahorro de tonner (pedido del usuario, 2026-08-20): sin relleno
+        # de color en los títulos (antes una barra sólida oscura en toda
+        # la fila de encabezado) — en cambio, títulos en negrita más
+        # grande que el cuerpo, centrados en cada columna, con una sola
+        # línea debajo para separarlos visualmente. Padding de celda más
+        # angosto (2pt en vez del default de Platypus, 3pt) para que
+        # entren más renglones por hoja ("lo máximo posible", ídem).
+        estilo = [
+            ("FONTSIZE", (0, 1), (-1, -1), 7.5),
+            ("TOPPADDING", (0, 0), (-1, -1), 2),
+            ("BOTTOMPADDING", (0, 0), (-1, -1), 2),
+            ("GRID", (0, 0), (-1, -1), 0.4, colors.HexColor("#bbbbbb")),
+            ("VALIGN", (0, 0), (-1, -1), "MIDDLE"),
+        ]
+        for col in columnas_derecha:
+            estilo.append(("ALIGN", (col, 0), (col, -1), "RIGHT"))
+        # Encabezado: va DESPUÉS del `ALIGN` de `columnas_derecha` de
+        # arriba a propósito, para pisar el "RIGHT" de esa fila con
+        # "CENTER" (los comandos de `TableStyle` se aplican en orden, el
+        # último gana sobre el mismo rango).
+        estilo.append(("FONTNAME", (0, 0), (-1, 0), "Helvetica-Bold"))
+        estilo.append(("FONTSIZE", (0, 0), (-1, 0), 9))
+        estilo.append(("ALIGN", (0, 0), (-1, 0), "CENTER"))
+        estilo.append(("LINEBELOW", (0, 0), (-1, 0), 1, colors.black))
+        return estilo
+
+    # --- Cuántas filas de datos entran por página -----------------------
+    # Medido de verdad con `Table.wrap()` (no un alto de fila "a ojo") —
+    # bug real encontrado probando con 79 filas (2026-08-20): un valor
+    # aproximado dejaba cada bloque un pelo más grande de lo que entraba
+    # de verdad, y Platypus terminaba partiendo CADA bloque en 2 páginas
+    # reales (una con casi todo el bloque, otra con 1 sola fila + la fila
+    # de Transporte) — funcionaba (no se perdía nada) pero desperdiciaba
+    # una hoja extra en cada corte. Se arman 2 tablas de prueba con el
+    # mismo estilo real (sólo encabezado, y encabezado + 1 fila) y se
+    # resta para saber el alto real de una fila de datos.
+    _tabla_solo_header = Table([columnas], repeatRows=1)
+    _tabla_solo_header.setStyle(TableStyle(_estilo_base()))
+    _, _alto_header = _tabla_solo_header.wrap(ancho_util, alto_pagina)
+
+    _tabla_una_fila = Table([columnas, [""] * num_columnas], repeatRows=1)
+    _tabla_una_fila.setStyle(TableStyle(_estilo_base()))
+    _, _alto_header_mas_fila = _tabla_una_fila.wrap(ancho_util, alto_pagina)
+
+    alto_fila = max(_alto_header_mas_fila - _alto_header, 1)
+    alto_util_datos = alto_pagina - top_margin - bottom_margin
+    # Colchón generoso (Viene + Transporte + hasta 3 líneas de `pie` + el
+    # renglón de conteo) — mejor una página con algo de aire de más que
+    # arriesgar el mismo desborde; si igual se queda corta, Platypus
+    # parte la tabla puntual sola (red de seguridad, no se pierde nada).
+    FILAS_RESERVADAS = 6
+    filas_por_pagina = max(1, int((alto_util_datos - _alto_header) / alto_fila) - FILAS_RESERVADAS)
+
+    def _fila_total(etiqueta: str, valor: str, columna: int) -> list[str]:
+        # `valor` viaja ya formateado tal cual se quiere mostrar (con "$"
+        # si es un importe, como ya hacían los call sites existentes) —
+        # no se le antepone nada acá: algunos totales no son un importe
+        # puro (ej. "ND Rechazadas" de Comisiones combina cantidad +
+        # importe en un solo texto).
+        fila = [""] * num_columnas
+        if columna <= 0:
+            fila[0] = f"{etiqueta} {valor}"
+        else:
+            fila[0] = etiqueta
+            fila[columna] = valor
+        return fila
+
+    def _estilizar_fila_total(estilo: list[tuple], fila_idx: int, columna: int) -> None:
+        estilo.append(("FONTNAME", (0, fila_idx), (-1, fila_idx), "Helvetica-Bold"))
+        if columna > 0:
+            estilo.append(("SPAN", (0, fila_idx), (columna - 1, fila_idx)))
+            estilo.append(("BOX", (columna, fila_idx), (columna, fila_idx), 0.8, colors.black))
+            estilo.append(("ALIGN", (columna, fila_idx), (columna, fila_idx), "RIGHT"))
+        else:
+            estilo.append(("SPAN", (0, fila_idx), (-1, fila_idx)))
+            estilo.append(("BOX", (0, fila_idx), (0, fila_idx), 0.8, colors.black))
+
+    # --- Armado de las páginas ------------------------------------------
+    total_filas = len(filas)
+    num_paginas = -(-total_filas // filas_por_pagina) if total_filas else 1
+    elementos: list = []
+    acumulado_transporte = Decimal("0")
+
+    for num_pagina in range(num_paginas):
+        es_primera = num_pagina == 0
+        es_ultima = num_pagina == num_paginas - 1
+        desde = num_pagina * filas_por_pagina
+        hasta = min(desde + filas_por_pagina, total_filas)
+        bloque = filas[desde:hasta]
+
+        datos_tabla = [columnas]
+        estilo = _estilo_base()
+        filas_zebra: list[int] = []  # índices dentro de ESTA tabla, sólo filas de datos reales
+
+        if not es_primera and columna_transporte is not None:
+            fila_idx = len(datos_tabla)
+            datos_tabla.append(_fila_total("Viene:", f"$ {format_decimal(acumulado_transporte)}", columna_transporte))
+            _estilizar_fila_total(estilo, fila_idx, columna_transporte)
+
+        for fila in bloque:
+            filas_zebra.append(len(datos_tabla))
+            datos_tabla.append(fila)
+
+        if valores_transporte is not None and columna_transporte is not None:
+            acumulado_transporte += sum(valores_transporte[desde:hasta], Decimal("0"))
+
+        if not es_ultima and columna_transporte is not None:
+            fila_idx = len(datos_tabla)
+            datos_tabla.append(_fila_total("Transporte:", f"$ {format_decimal(acumulado_transporte)}", columna_transporte))
+            _estilizar_fila_total(estilo, fila_idx, columna_transporte)
+
+        if es_ultima:
+            for etiqueta, valor, columna in pie or []:
+                fila_idx = len(datos_tabla)
+                datos_tabla.append(_fila_total(f"{etiqueta}:", valor, columna))
+                _estilizar_fila_total(estilo, fila_idx, columna)
+
+            fila_idx = len(datos_tabla)
+            # Bug real encontrado probando (2026-08-20): "renglón"/
+            # "impreso" no pluralizan con el mismo sufijo ("renglones",
+            # no "renglónes"; "impresos", no "impresoes") — un solo
+            # sufijo compartido quedaba mal en los dos.
+            texto_conteo = "1 renglón impreso" if total_filas == 1 else f"{total_filas} renglones impresos"
+            fila_conteo = [""] * num_columnas
+            fila_conteo[0] = texto_conteo
+            datos_tabla.append(fila_conteo)
+            estilo.append(("FONTNAME", (0, fila_idx), (-1, fila_idx), "Helvetica-Oblique"))
+            estilo.append(("SPAN", (0, fila_idx), (-1, fila_idx)))
+
+        # Zebra striping sólo sobre filas de datos reales — no sobre el
+        # encabezado ni las de total (que ya tienen su propio estilo).
+        for i, idx in enumerate(filas_zebra):
+            if i % 2 == 1:
+                estilo.append(("BACKGROUND", (0, idx), (-1, idx), colors.HexColor("#f2f2f2")))
+
+        tabla = Table(datos_tabla, repeatRows=1)
+        tabla.setStyle(TableStyle(estilo))
+        elementos.append(tabla)
+        if not es_ultima:
+            elementos.append(PageBreak())
+
+    class _NumberedCanvas(canvas.Canvas):
+        """Difiere el dibujo del pie de página (necesita el total de
+        páginas, que sólo se sabe al terminar) hasta `save()` — patrón
+        estándar de ReportLab para numerar "Hoja N de M"."""
+
+        def __init__(self, *args, **kwargs):
+            canvas.Canvas.__init__(self, *args, **kwargs)
+            self._paginas_guardadas: list[dict] = []
+
+        def showPage(self) -> None:  # noqa: N802 (override de reportlab)
+            self._paginas_guardadas.append(dict(self.__dict__))
+            self._startPage()
+
+        def save(self) -> None:  # noqa: N802 (override de reportlab)
+            total_paginas = len(self._paginas_guardadas)
+            for estado in self._paginas_guardadas:
+                self.__dict__.update(estado)
+                self._dibujar_marco(total_paginas)
+                canvas.Canvas.showPage(self)
+            canvas.Canvas.save(self)
+
+        def _dibujar_marco(self, total_paginas: int) -> None:
+            self.saveState()
+            y_tope = alto_pagina - margen
+            self.setFont("Helvetica-Bold", 11)
+            self.drawString(margen, y_tope - 8, "ALESTEL SRL")
+            self.setFont("Helvetica", 9)
+            self.drawRightString(ancho_pagina - margen, y_tope - 8, formatear_fecha_corta(date.today()))
+            self.setFont("Helvetica-Bold", 13)
+            self.drawCentredString(ancho_pagina / 2, y_tope - 26, titulo)
+            self.setFont("Helvetica", 8.5)
+            self.drawCentredString(ancho_pagina / 2, y_tope - 38, subtitulo)
+            self.setFont("Helvetica", 8)
+            # Alineado con `alto_texto_pie` de más arriba — la tabla
+            # termina 2mm por encima de este texto (ver `alto_pie`).
+            self.drawCentredString(ancho_pagina / 2, margen + 4, f"Hoja {self.getPageNumber()} de {total_paginas}")
+            self.restoreState()
+
     doc = SimpleDocTemplate(
         str(ruta), pagesize=tamano_pagina,
-        leftMargin=12 * mm, rightMargin=12 * mm, topMargin=12 * mm, bottomMargin=12 * mm,
+        leftMargin=margen, rightMargin=margen, topMargin=top_margin, bottomMargin=bottom_margin,
         title=titulo,
     )
-    ancho_util = tamano_pagina[0] - 24 * mm
-
-    # Cabecera de impresión (pedido del usuario, 2026-08-18): "ALESTEL
-    # SRL" arriba a la izquierda, fecha arriba a la derecha, el título
-    # del listado centrado, y debajo de éste (también centrado) la
-    # selección del operador (Cliente/Zona/Todos/etc. — lo que hasta
-    # ahora era `subtitulo`, mismo texto, sólo cambia dónde y cómo se
-    # dibuja).
-    estilo_empresa = ParagraphStyle("EmpresaListado", parent=_ESTILOS["Normal"], fontSize=11, fontName="Helvetica-Bold", alignment=TA_LEFT)
-    estilo_fecha = ParagraphStyle("FechaListado", parent=_ESTILOS["Normal"], fontSize=9, alignment=TA_RIGHT)
-    estilo_titulo = ParagraphStyle(
-        "TituloListado", parent=_ESTILOS["Heading1"], fontSize=14, alignment=TA_CENTER, spaceBefore=6, spaceAfter=2
-    )
-    estilo_subtitulo = ParagraphStyle("SubtituloListado", parent=_ESTILOS["Normal"], fontSize=9, alignment=TA_CENTER, spaceAfter=8)
-
-    fila_encabezado = Table(
-        [[Paragraph("ALESTEL SRL", estilo_empresa), Paragraph(date.today().strftime("%d/%m/%Y"), estilo_fecha)]],
-        colWidths=[ancho_util / 2, ancho_util / 2],
-    )
-    fila_encabezado.setStyle(
-        TableStyle([("VALIGN", (0, 0), (-1, -1), "TOP"), ("LEFTPADDING", (0, 0), (-1, -1), 0), ("RIGHTPADDING", (0, 0), (-1, -1), 0)])
-    )
-
-    elementos = [
-        fila_encabezado,
-        Paragraph(titulo, estilo_titulo),
-        Paragraph(subtitulo, estilo_subtitulo),
-        Spacer(1, 4),
-    ]
-
-    datos_tabla = [columnas] + filas
-    tabla = Table(datos_tabla, repeatRows=1)
-    estilo = [
-        ("BACKGROUND", (0, 0), (-1, 0), colors.HexColor("#2c3e50")),
-        ("TEXTCOLOR", (0, 0), (-1, 0), colors.white),
-        ("FONTNAME", (0, 0), (-1, 0), "Helvetica-Bold"),
-        ("FONTSIZE", (0, 0), (-1, -1), 7.5),
-        ("GRID", (0, 0), (-1, -1), 0.4, colors.HexColor("#bbbbbb")),
-        ("ROWBACKGROUNDS", (0, 1), (-1, -1), [colors.white, colors.HexColor("#f2f2f2")]),
-        ("VALIGN", (0, 0), (-1, -1), "MIDDLE"),
-    ]
-    for col in columnas_derecha:
-        estilo.append(("ALIGN", (col, 0), (col, -1), "RIGHT"))
-    tabla.setStyle(TableStyle(estilo))
-    elementos.append(tabla)
-
-    if pie:
-        elementos.append(Spacer(1, 10))
-        filas_pie = [[etiqueta, valor] for etiqueta, valor in pie]
-        tabla_pie = Table(filas_pie, colWidths=[120 * mm, 40 * mm])
-        tabla_pie.setStyle(
-            TableStyle(
-                [
-                    ("FONTNAME", (0, 0), (-1, -1), "Helvetica-Bold"),
-                    ("FONTSIZE", (0, 0), (-1, -1), 9),
-                    ("ALIGN", (1, 0), (1, -1), "RIGHT"),
-                ]
-            )
-        )
-        elementos.append(tabla_pie)
-
-    doc.build(elementos)
+    doc.build(elementos, canvasmaker=_NumberedCanvas)
+    return ruta
     return ruta

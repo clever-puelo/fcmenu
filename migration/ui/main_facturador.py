@@ -17,6 +17,7 @@ import sys
 from PyQt6.QtWidgets import QApplication
 
 from .facturador_window import FacturadorWindow
+from .iconos import icono
 from .theme import aplicar_tema
 
 
@@ -24,6 +25,7 @@ def main() -> int:
     app = QApplication(sys.argv)
     aplicar_tema(app)
     ventana = FacturadorWindow()
+    ventana.setWindowIcon(icono("factura", 32))
     ventana.show()
     return app.exec()
 

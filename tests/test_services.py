@@ -1972,6 +1972,93 @@ class TestEmisionReciboService:
         assert efectivo.TIPO == 4
 
 
+class TestDetalleRecibo:
+    """`CuentaCorrienteService.detalle_recibo()` — usado por
+    `ReciboDetalleDialog` (pedido del usuario, 2026-08-20: ventana
+    flotante para ver el detalle de un Recibo desde Cta.Cte.). Arma un
+    Recibo real vía `EmisionReciboService.emitir_recibo()` (mismo
+    fixture que `TestEmisionReciboService`) y verifica que el detalle
+    junte cabecera+aplicación+cheque+retención+efectivo correctamente."""
+
+    def _cliente(self, db, deuda="1000"):
+        cliente = Cliente(CODIGO=300, NOMB="Cliente Detalle Recibo", TEL1="011-555", EMAIL="c@x.com", CORR1=0, DEUDA=Decimal(deuda))
+        db.add(cliente)
+        db.add(Parametro(CLAVE="1", NUME8=999))
+        db.commit()
+        return cliente
+
+    def _factura_pendiente(self, db, clte=300, cpbte=20, debe="900", fecha=date(2026, 3, 1)):
+        factura = Ctascte(
+            CLTE=clte, FECHA=fecha, TIPO=1, PREFIJO=1, CPBTE=cpbte, LETRA="A",
+            IMPUT1="0 ", IMPUT2="0 ", IMPUT3="0 ", IMPUT4="0 ", IMPUT5="0 ", IMPUT6="0 ",
+            DEBE=Decimal(debe), IMPTE=Decimal(debe), FECVTO=fecha,
+        )
+        db.add(factura)
+        db.commit()
+        return factura
+
+    def test_detalle_recibo_junta_aplicacion_cheque_retencion_y_efectivo(self, db):
+        cliente = self._cliente(db, deuda="900")
+        factura = self._factura_pendiente(db, debe="900")
+
+        EmisionReciboService(db).emitir_recibo(
+            cliente=cliente, numero=2001,
+            aplicaciones=[AplicacionPago(comprobante=factura, importe_aplicado=Decimal("900"))],
+            anticipo=Decimal("0"), importe_efectivo=Decimal("300"),
+            cheques=[
+                PagoCheque(
+                    nro_cheque=777888, banco="007", fecha_emision=date(2026, 3, 1),
+                    fecha_vencimiento=date(2026, 4, 1), importe=Decimal("400"),
+                )
+            ],
+            retenciones=[PagoRetencion(tipreg=1, importe=Decimal("200"), concepto="Retencion Ganancias")],
+            usuario="ana", fecha=date(2026, 3, 1),
+        )
+
+        detalle = CuentaCorrienteService(db).detalle_recibo(300, 2001)
+
+        assert detalle is not None
+        assert detalle.cliente.CODIGO == 300
+        assert detalle.numero == 2001
+        assert detalle.fecha == date(2026, 3, 1)
+        assert detalle.total == Decimal("900")
+        assert detalle.descuento == Decimal("0")
+        assert detalle.anticipo == Decimal("0")
+
+        assert len(detalle.aplicaciones) == 1
+        assert detalle.aplicaciones[0].tipo_label == "Fact."
+        assert detalle.aplicaciones[0].numero == "20"
+        assert detalle.aplicaciones[0].importe == Decimal("900")
+
+        formas = {f.forma: f for f in detalle.formas_pago}
+        assert formas["Efectivo"].importe == Decimal("300")
+        assert formas["Cheque"].importe == Decimal("400")
+        assert "777888" in formas["Cheque"].detalle
+        assert formas["Retenc.Gan."].importe == Decimal("200")
+
+    def test_detalle_recibo_con_descuento_lo_expone_por_separado(self, db):
+        cliente = self._cliente(db, deuda="1000")
+        factura = self._factura_pendiente(db, cpbte=21, debe="1000")
+
+        EmisionReciboService(db).emitir_recibo(
+            cliente=cliente, numero=2002,
+            aplicaciones=[
+                AplicacionPago(comprobante=factura, importe_aplicado=Decimal("1000"), descuento=Decimal("50"))
+            ],
+            anticipo=Decimal("0"), importe_efectivo=Decimal("950"),
+            cheques=[], retenciones=[], usuario="ana", fecha=date(2026, 3, 2),
+        )
+
+        detalle = CuentaCorrienteService(db).detalle_recibo(300, 2002)
+
+        assert detalle is not None
+        assert detalle.descuento == Decimal("50")
+
+    def test_detalle_recibo_inexistente_devuelve_none(self, db):
+        cliente = self._cliente(db)
+        assert CuentaCorrienteService(db).detalle_recibo(cliente.CODIGO, 999999) is None
+
+
 # ---------------------------------------------------------------------------
 # ChequeService (VerCheq.frm)
 # ---------------------------------------------------------------------------

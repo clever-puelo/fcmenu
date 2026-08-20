@@ -15,6 +15,7 @@ import sys
 
 from PyQt6.QtWidgets import QApplication
 
+from .iconos import icono
 from .recibo_window import ReciboWindow
 from .theme import aplicar_tema
 
@@ -23,6 +24,7 @@ def main() -> int:
     app = QApplication(sys.argv)
     aplicar_tema(app)
     ventana = ReciboWindow()
+    ventana.setWindowIcon(icono("recibo", 32))
     ventana.show()
     return app.exec()
 

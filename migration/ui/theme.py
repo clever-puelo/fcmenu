@@ -240,13 +240,17 @@ def aplicar_tema(app: QApplication) -> None:
 
 def icono_app() -> QIcon:
     """Ícono de la aplicación (barra de tareas/título de ventana) —
-    reusa `ICON1.ICO` del proyecto legacy (mismo criterio de "parecido
-    al anterior"; el usuario puede reemplazarlo cuando deje íconos
-    nuevos en la carpeta)."""
+    usa `assets/Icon-Alestel.png` (provisto por el usuario, 2026-08-20).
+    Si por algún motivo faltara, cae a `ICON1.ICO` del proyecto legacy
+    (comportamiento previo) y, en última instancia, a un `QIcon` vacío."""
     from pathlib import Path
 
-    ruta = Path(__file__).resolve().parent.parent.parent / "ICON1.ICO"
-    return QIcon(str(ruta)) if ruta.exists() else QIcon()
+    raiz = Path(__file__).resolve().parent.parent.parent
+    ruta_png = raiz / "assets" / "Icon-Alestel.png"
+    if ruta_png.exists():
+        return QIcon(str(ruta_png))
+    ruta_ico = raiz / "ICON1.ICO"
+    return QIcon(str(ruta_ico)) if ruta_ico.exists() else QIcon()
 
 
 def logo_empresa(alto: int = 52) -> QPixmap:

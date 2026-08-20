@@ -46,6 +46,13 @@ GLIFOS: dict[str, tuple[str, str]] = {
     "factura": ("🧾", Verde.MEDIO_CLARO),
     "recibo": ("💵", Verde.MEDIO_CLARO),
     "ncredito": ("↩️", Verde.CLARO),
+    # Mismo glifo que "ncredito" — "N.Créd. x Mercadería" es el mismo
+    # concepto (Nota de Crédito), sólo la variante con reversa de Stock.
+    # Bug real encontrado el 2026-08-20: esta clave se usaba en la barra
+    # de tareas (main_menu_window.py) sin existir acá, así que caía
+    # siempre al bullet genérico "•" — se nota mucho más ahora que los
+    # íconos se agrandaron al doble.
+    "ncredito_merc": ("↩️", Verde.CLARO),
     "ingreso_stock": ("📥", Verde.MEDIO_CLARO),
     "listados": ("📋", Verde.MEDIO_CLARO),
     "calculadora": ("🧮", Verde.PASTEL),

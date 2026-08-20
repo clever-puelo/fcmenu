@@ -15,6 +15,7 @@ from migration.db import get_session
 from migration.repository import RepositoryFactory
 
 from .dtos_cliente_dialog import DtosClienteDialog
+from .iconos import icono
 from .theme import aplicar_tema
 
 
@@ -27,6 +28,7 @@ def main() -> int:
     cliente = repos.cliente().by_codigo(codigo)
     nombre = cliente.NOMB if cliente else ""
     dialogo = DtosClienteDialog(repos, codigo, nombre or "")
+    dialogo.setWindowIcon(icono("descuentos", 32))
     dialogo.show()
     resultado = app.exec()
     db.close()

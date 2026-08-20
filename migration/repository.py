@@ -645,6 +645,20 @@ class CtascteRepository(BaseRepository[Ctascte]):
         """Retorna movimientos de cuenta corriente de un cliente."""
         return self.db.query(Ctascte).filter(Ctascte.CLTE == clte).all()
 
+    def by_cliente_tipo_cpbte(self, clte: int, tipo: int, cpbte: int) -> Optional[Ctascte]:
+        """Busca una fila puntual de Ctasctes por Cliente+Tipo+Comprobante
+        — usado para recuperar la cabecera de un Recibo (TIPO=4) y sus
+        filas relacionadas de Descuento (TIPO=6)/Anticipo (TIPO=5), que
+        comparten el mismo CPBTE (ver `EmisionReciboService.emitir_recibo`,
+        `ReciboDetalleDialog`). Nombre distinto a propósito del
+        `by_comprobante()` de más abajo (`tipo, letra, prefijo, cpbte`) —
+        ya existía con otra firma, no se toca para no romper sus usos."""
+        return (
+            self.db.query(Ctascte)
+            .filter(Ctascte.CLTE == clte, Ctascte.TIPO == tipo, Ctascte.CPBTE == cpbte)
+            .first()
+        )
+
     # TIPO de CtasCtes que suman al saldo deudor del cliente (algoritmo real
     # extraído de CtaCte.frm:2278-2289 y CtaCte.frm:1941-1950):
     #   0 = Saldo Anterior, 1 = Factura, 3 = Nota de Débito, 7 = Recibo Anulado
@@ -1272,6 +1286,19 @@ class ChequeRepository(BaseRepository[Cheque]):
             .all()
         )
 
+    def by_recibo(self, cpbte: int) -> List[Cheque]:
+        """Todos los cheques recibidos como pago de un Recibo puntual
+        (`TIPING=1`, "Recibo CC"), sin importar `ESTADO` — a diferencia
+        de `en_cartera_de_cliente()`, acá interesa el detalle completo
+        del Recibo (`ReciboDetalleDialog`), no sólo lo pendiente de
+        depositar."""
+        return (
+            self.db.query(Cheque)
+            .filter(Cheque.TIPING == 1, Cheque.CPBING == cpbte)
+            .order_by(Cheque.NROCHEQ.asc())
+            .all()
+        )
+
     def by_estado_desde(self, estado: str, fecha_desde: date, limite: int = 50) -> List[Cheque]:
         """Réplica de `VerCheq.frm Sub DoVer2` ("Consulta de Cheques"
         general, todos los clientes): cheques de un Estado con
@@ -1312,6 +1339,13 @@ class MovimVSRepository(BaseRepository[MovimVS]):
 
     def __init__(self, db: Session):
         super().__init__(db, MovimVS)
+
+    def by_comprobante(self, cpbte: int, tipo: str = "4") -> List[MovimVS]:
+        """Todas las filas (Retenciones/Tarjeta/Transferencia/Baja
+        Incobr., cualquier `TIPREG`) de un Recibo puntual — a diferencia
+        de `by_comprobante_y_tipreg()`, que busca una sola, acá interesa
+        el detalle completo del Recibo (`ReciboDetalleDialog`)."""
+        return self.db.query(MovimVS).filter(MovimVS.CPBTE == cpbte, MovimVS.TIPO == tipo).all()
 
     def by_comprobante_y_tipreg(self, cpbte: int, tipreg: str) -> Optional[MovimVS]:
         """Réplica del `SELECT * FROM MovimVS WHERE CPBTE = ... AND

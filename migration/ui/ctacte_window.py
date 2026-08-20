@@ -64,8 +64,13 @@ from .cheques_cliente_dialog import ChequesClienteDialog
 from .cliente_busqueda_window import ClienteBusquedaWindow
 from .factura_emitida_detalle_dialog import FacturaEmitidaDetalleDialog
 from .nota_cliente_dialog import NotaClienteDialog
+from .recibo_detalle_dialog import ReciboDetalleDialog
 from .saldos_clientes_dialog import SaldosClientesDialog
-from .widgets import redimensionar_pct_pantalla
+from .widgets import (
+    redimensionar_pct_pantalla,
+    texto_direccion_cliente,
+    texto_telefono_email_cliente,
+)
 
 ANIO_MINIMO = 2005  # CtaCte.frm Sub CargaAnos: "Ano1 = 2005"
 
@@ -87,10 +92,13 @@ COLUMNAS_ALINEADAS_DERECHA = (COL_CPBTE, COL_RESTO, COL_DEBE, COL_HABER, COL_SAL
 COLUMNAS_ALINEADAS_CENTRO = (COL_IMPUT1, COL_IMPUT2, COL_IMPUT3, COL_IMPUT4)
 
 # TIPO de comprobante que puede tener cabecera en FCIVAVTA (Facturas/NC/ND
-# — Recibos y el resto de los movimientos de Ctasctes no la tienen, un
-# clic ahí no encuentra nada, igual que CtaCte.frm MuestraDetalle cuando
-# RgFCIVA.EOF).
+# — el resto de los movimientos de Ctasctes no la tienen, un clic ahí no
+# encuentra nada, igual que CtaCte.frm MuestraDetalle cuando RgFCIVA.EOF).
 TIPOS_CON_DRILLDOWN = {1, 2, 3}
+# Recibo — detalle propio, vía ReciboDetalleDialog (pedido del usuario,
+# 2026-08-20: "poder ver el detalle de recibos en la cuenta corriente"),
+# no pasa por FCIVAVTA como los de arriba.
+TIPO_RECIBO = 4
 
 
 class CtaCteWindow(QMainWindow):
@@ -137,9 +145,20 @@ class CtaCteWindow(QMainWindow):
         contenedor = QWidget()
         fila = QHBoxLayout(contenedor)
 
+        # Cabecera a 3 líneas (pedido del usuario, 2026-08-20): código+
+        # nombre resaltado / dirección+localidad / teléfono+email — así
+        # el operador ve los datos de contacto sin recorrer otra
+        # pantalla.
+        bloque_cliente = QVBoxLayout()
+        bloque_cliente.setSpacing(0)
         self.lbl_cliente = QLabel("(sin cliente elegido)")
         self.lbl_cliente.setStyleSheet("font-weight: bold;")
-        fila.addWidget(self.lbl_cliente, stretch=1)
+        bloque_cliente.addWidget(self.lbl_cliente)
+        self.lbl_cliente_direccion = QLabel("—")
+        bloque_cliente.addWidget(self.lbl_cliente_direccion)
+        self.lbl_cliente_contacto = QLabel("—")
+        bloque_cliente.addWidget(self.lbl_cliente_contacto)
+        fila.addLayout(bloque_cliente, stretch=1)
 
         self.btn_nota_cliente = QPushButton("Nota Clte.")
         self.btn_nota_cliente.setEnabled(False)
@@ -243,7 +262,12 @@ class CtaCteWindow(QMainWindow):
         if fila < 0 or fila >= len(self._filas_extracto):
             return
         info = self._filas_extracto[fila]
-        if info.tipo not in TIPOS_CON_DRILLDOWN or info.cpbte is None:
+        if info.cpbte is None:
+            return
+        if info.tipo == TIPO_RECIBO:
+            ReciboDetalleDialog(self.cc_service, self.cliente_actual.CODIGO, info.cpbte, parent=self).exec()
+            return
+        if info.tipo not in TIPOS_CON_DRILLDOWN:
             return
         factura = self.repos.fciva_vta().by_comprobante(
             str(info.tipo), info.letra or "", info.prefijo or 0, info.cpbte
@@ -330,6 +354,8 @@ class CtaCteWindow(QMainWindow):
         cliente = self.cliente_actual
         if cliente is None:
             self.lbl_cliente.setText("(sin cliente elegido)")
+            self.lbl_cliente_direccion.setText("—")
+            self.lbl_cliente_contacto.setText("—")
             self.btn_nota_cliente.setEnabled(False)
             self.btn_nota_cliente.setStyleSheet("")
             self._cargar_extracto()
@@ -337,6 +363,8 @@ class CtaCteWindow(QMainWindow):
             return
 
         self.lbl_cliente.setText(f"{cliente.CODIGO}  {(cliente.NOMB or '').strip()}")
+        self.lbl_cliente_direccion.setText(texto_direccion_cliente(cliente))
+        self.lbl_cliente_contacto.setText(texto_telefono_email_cliente(cliente))
         self.btn_nota_cliente.setEnabled(True)
 
         # Auto-popup de Nota Cliente — réplica de CtaCte.frm Form_Activate

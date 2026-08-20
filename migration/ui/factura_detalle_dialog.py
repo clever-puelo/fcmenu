@@ -49,7 +49,10 @@ def construir_grupo_renglones(
     poder ver 10 renglones y poder scrolear")."""
     grupo = QGroupBox(titulo)
     layout = QVBoxLayout(grupo)
-    tabla = TablaBusqueda(COLUMNAS_ITEMS)
+    # Todas las columnas numéricas alineadas a la derecha (pedido del
+    # usuario, 2026-08-20: "ajustar los valores del detalle") — todas
+    # salvo "Sección" (índice 0), que es texto.
+    tabla = TablaBusqueda(COLUMNAS_ITEMS, columnas_derecha=tuple(range(1, len(COLUMNAS_ITEMS))))
     if filas_visibles is not None:
         tabla.setMinimumHeight(filas_visibles * _ALTO_FILA_TABLA_BUSQUEDA + _ALTO_HEADER_TABLA_BUSQUEDA + 4)
 

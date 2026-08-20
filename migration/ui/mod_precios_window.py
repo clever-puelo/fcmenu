@@ -29,6 +29,7 @@ from __future__ import annotations
 from decimal import Decimal
 from typing import Optional
 
+from PyQt6.QtCore import Qt
 from PyQt6.QtWidgets import (
     QComboBox,
     QFrame,
@@ -219,9 +220,17 @@ class ModPreciosWindow(QMainWindow):
             self.tabla.insertRow(fila)
             self.tabla.setItem(fila, 0, QTableWidgetItem((art.COD1 or "").strip()))
             self.tabla.setItem(fila, 1, QTableWidgetItem((art.COD2 or "").strip()))
-            self.tabla.setItem(fila, 2, QTableWidgetItem(f"$ {format_decimal(precio_actual)}"))
-            self.tabla.setItem(fila, 3, QTableWidgetItem(f"$ {format_decimal(precio_nuevo)}"))
-            self.tabla.setItem(fila, 4, QTableWidgetItem(str(art.STOCK if art.STOCK is not None else 0)))
+            # Precio Actual/Precio Nuevo/Stock alineados a la derecha
+            # (pedido del usuario, 2026-08-20).
+            item_precio_actual = QTableWidgetItem(f"$ {format_decimal(precio_actual)}")
+            item_precio_actual.setTextAlignment(Qt.AlignmentFlag.AlignRight | Qt.AlignmentFlag.AlignVCenter)
+            self.tabla.setItem(fila, 2, item_precio_actual)
+            item_precio_nuevo = QTableWidgetItem(f"$ {format_decimal(precio_nuevo)}")
+            item_precio_nuevo.setTextAlignment(Qt.AlignmentFlag.AlignRight | Qt.AlignmentFlag.AlignVCenter)
+            self.tabla.setItem(fila, 3, item_precio_nuevo)
+            item_stock = QTableWidgetItem(str(art.STOCK if art.STOCK is not None else 0))
+            item_stock.setTextAlignment(Qt.AlignmentFlag.AlignRight | Qt.AlignmentFlag.AlignVCenter)
+            self.tabla.setItem(fila, 4, item_stock)
 
         self.lbl_cantidad.setText(f"Artículos seleccionados : {len(self.candidatos)}")
         self.btn_modificar.setEnabled(len(self.candidatos) > 0)

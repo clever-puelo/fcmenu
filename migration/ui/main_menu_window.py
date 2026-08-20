@@ -71,13 +71,26 @@ ALTO_BARRA_TAREAS = 64  # botones de 52px + margen — deja lugar para 2 líneas
 # `_reconstruir_barra_tareas`) — 2 botones de 52px apilados + el mismo
 # margen/espaciado que ya usaba la versión de 1 línea.
 ALTO_BARRA_TAREAS_2_FILAS = 2 * (ALTO_BARRA_TAREAS - 12) + 10
-# Con más de esta cantidad de botones en una sección, la barra pasa a 2
-# líneas en vez de 1 (feedback del usuario, 2026-08-18, segunda ronda:
-# "en listados, como hay muchos botones, la ventana principal se estira
-# y sale del monitor" — con 12 botones en una sola fila, el ancho
-# mínimo de cada uno no entraba en pantalla y forzaba a la ventana
-# principal a crecer más allá del monitor).
-MAX_BOTONES_UNA_FILA = 9
+# Si el ancho que le tocaría a cada botón en una sola fila cae por
+# debajo de esto, la barra pasa a 2 líneas (feedback del usuario,
+# 2026-08-18, segunda ronda: "en listados, como hay muchos botones, la
+# ventana principal se estira y sale del monitor" — con muchos botones en
+# una sola fila, el ancho mínimo de cada uno no entraba en pantalla y
+# forzaba a la ventana principal a crecer más allá del monitor).
+# Reemplaza al umbral viejo por CANTIDAD fija de botones (`MAX_BOTONES_
+# UNA_FILA = 9`) — bug real, 2026-08-20: Consultas tiene justo 9 botones
+# (el límite viejo la dejaba en 1 fila) y, al agrandar los íconos del
+# menú (ver Fase A), el ancho mínimo real de cada botón pasó a superar
+# lo que le tocaba por `stretch`, y Qt agrandaba la ventana SOLA para
+# cumplir el nuevo mínimo del layout. Calcular por ancho real, no por
+# cantidad, evita que esto se repita cada vez que cambie el tamaño de
+# ícono/fuente.
+ANCHO_MINIMO_BOTON_TAREA = 150
+# Ícono real de los botones de la barra de tareas (`_crear_boton_tarea`)
+# — reusado acá para que `_envolver_en_dos_lineas()` descuente el ancho
+# correcto (bug real, 2026-08-20: quedó un "34" hardcodeado, calibrado
+# para el ícono viejo de 22px, que ya no alcanzaba tras agrandarlo).
+ANCHO_ICONO_TAREA = 40
 
 # Posicionamiento de subventanas del MDI (feedback del usuario,
 # 2026-08-18, tercera ronda: "quedaría más agradable si las ventanas/
@@ -151,7 +164,13 @@ def _envolver_en_dos_lineas(texto: str, fuente: QFont, ancho_disponible: int) ->
     uniforme en la barra de tareas, "achicar el texto o colocarlo en 2
     líneas" en vez de agrandar el botón o mostrar scroll."""
     metrica = QFontMetrics(fuente)
-    ancho_libre = max(ancho_disponible - 34, 40)  # descuenta ícono + paddings
+    # Descuenta ícono (40px, `ANCHO_ICONO_TAREA`) + padding/borde/espaciado
+    # ícono-texto real del QSS del botón (`padding: 2px 8px` + `border:
+    # 1px` + separación nativa de Qt entre ícono y texto, ~6px) — antes
+    # era un "34" fijo calibrado para el ícono viejo de 22px (bug real,
+    # 2026-08-20: quedó corto al agrandarlo, dejaba de envolver texto
+    # largo que ya no entraba en una línea).
+    ancho_libre = max(ancho_disponible - (ANCHO_ICONO_TAREA + 20), 40)
     if metrica.horizontalAdvance(texto) <= ancho_libre:
         return texto
 
@@ -344,8 +363,11 @@ class MainMenuWindow(QMainWindow):
         for clave_icono, etiqueta, nombre_seccion in self._BOTONES_SIDEBAR:
             boton = QToolButton()
             boton.setText(etiqueta)
-            boton.setIcon(icono(clave_icono, 26))
-            boton.setIconSize(QSize(26, 26))
+            # Íconos al doble (pedido del usuario, 2026-08-20): 26->48px —
+            # el mínimo de 68px del botón (línea de abajo) ya absorbe el
+            # crecimiento sin que el botón cambie de tamaño.
+            boton.setIcon(icono(clave_icono, 48))
+            boton.setIconSize(QSize(48, 48))
             # Ícono a la izquierda, texto a la derecha, en una sola línea
             # (feedback del usuario, 2026-08-16 — antes el ícono quedaba
             # arriba del texto).
@@ -410,11 +432,11 @@ class MainMenuWindow(QMainWindow):
         )
         layout.addWidget(self.lbl_titulo_seccion)
 
-        # 2 líneas de botones cuando una sección tiene más de
-        # `MAX_BOTONES_UNA_FILA` (ver `_reconstruir_barra_tareas`) — las
-        # 2 filas se arman siempre acá (la segunda arranca vacía/oculta)
-        # y `_reconstruir_barra_tareas` decide cuántos botones va en cada
-        # una según la sección activa.
+        # 2 líneas de botones cuando no entran cómodos en 1
+        # (`ANCHO_MINIMO_BOTON_TAREA`, ver `_reconstruir_barra_tareas`) —
+        # las 2 filas se arman siempre acá (la segunda arranca vacía/
+        # oculta) y `_reconstruir_barra_tareas` decide cuántos botones va
+        # en cada una según la sección activa.
         self.contenedor_tareas = QWidget()
         self.contenedor_tareas.setFixedHeight(ALTO_BARRA_TAREAS)
         self.contenedor_tareas.setStyleSheet(f"background-color: {Verde.PASTEL};")
@@ -466,12 +488,25 @@ class MainMenuWindow(QMainWindow):
         self._limpiar_fila_tareas(self.layout_barra_tareas_2)
 
         items = self._secciones()[self._seccion_actual]
-        # 2 líneas de botones si hay más de `MAX_BOTONES_UNA_FILA`
-        # (feedback del usuario, 2026-08-18, segunda ronda — ver
-        # docstring de la constante): se reparten en el mismo orden de
-        # la lista, primero la fila de arriba y después la de abajo, no
-        # intercalados.
-        dos_filas = len(items) > MAX_BOTONES_UNA_FILA
+
+        # Se calcula a partir de `self.width()`/`self.sidebar.width()` (no
+        # de `contenedor_tareas.width()`): recién después de que Qt activa
+        # el layout completo un widget anidado refleja su ancho real, y
+        # esto puede correr antes de eso (primera sección seleccionada en
+        # `__init__`, todavía sin mostrar la ventana).
+        ancho_disponible = max(self.width() - self.sidebar.width() - 40, 200)
+
+        # 2 líneas de botones si NO ENTRAN cómodos en una sola (bug real,
+        # 2026-08-20: con el umbral viejo por CANTIDAD de botones
+        # (`MAX_BOTONES_UNA_FILA`), Consultas (9 botones, justo en el
+        # límite) se quedaba en 1 fila con íconos ya agrandados —
+        # `ANCHO_MINIMO_BOTON_TAREA` no entraba, el `QMainWindow` subía su
+        # tamaño MÍNIMO y Qt terminaba agrandando la ventana sola al
+        # entrar a esa sección. Ahora se decide por ancho real disponible
+        # — mismo criterio que ya usaba Listados ("2 filas si no entran"),
+        # pero calculado en vez de una cantidad fija que queda corta en
+        # cuanto cambia el tamaño de ícono/fuente.
+        dos_filas = ancho_disponible // len(items) < ANCHO_MINIMO_BOTON_TAREA
         if dos_filas:
             mitad = -(-len(items) // 2)  # ceil(len/2)
             items_fila1, items_fila2 = items[:mitad], items[mitad:]
@@ -489,12 +524,6 @@ class MainMenuWindow(QMainWindow):
         # larga) — así el tamaño de letra queda consistente entre
         # secciones aunque una tenga menos botones (esos quedan más
         # anchos, "proporcionales" al espacio real disponible).
-        # Se calcula a partir de `self.width()`/`self.sidebar.width()` (no
-        # de `contenedor_tareas.width()`): recién después de que Qt activa
-        # el layout completo un widget anidado refleja su ancho real, y
-        # esto puede correr antes de eso (primera sección seleccionada en
-        # `__init__`, todavía sin mostrar la ventana).
-        ancho_disponible = max(self.width() - self.sidebar.width() - 40, 200)
         ancho_referencia = ancho_disponible // max(len(items_fila1), len(items_fila2), 8)
         for clave_icono, etiqueta, callback in items_fila1:
             boton = self._crear_boton_tarea(clave_icono, etiqueta, callback, ancho_referencia)
@@ -506,8 +535,11 @@ class MainMenuWindow(QMainWindow):
     def _crear_boton_tarea(self, clave_icono: str, etiqueta: str, callback, ancho_referencia: int) -> QToolButton:
         boton = QToolButton()
         boton.setText(_envolver_en_dos_lineas(etiqueta, boton.font(), ancho_referencia))
-        boton.setIcon(icono(clave_icono, 22))
-        boton.setIconSize(QSize(22, 22))
+        # Íconos casi al doble (pedido del usuario, 2026-08-20): 22->40px —
+        # el alto fijo del botón (52px, ver `ALTO_BARRA_TAREAS`) no cambia,
+        # sigue entrando con margen (padding+borde ~6px por lado).
+        boton.setIcon(icono(clave_icono, ANCHO_ICONO_TAREA))
+        boton.setIconSize(QSize(ANCHO_ICONO_TAREA, ANCHO_ICONO_TAREA))
         boton.setToolButtonStyle(Qt.ToolButtonStyle.ToolButtonTextBesideIcon)
         boton.setFixedHeight(ALTO_BARRA_TAREAS - 12)
         boton.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Fixed)
@@ -539,10 +571,12 @@ class MainMenuWindow(QMainWindow):
             boton.setEnabled(False)
             boton.setToolTip("Próximamente")
         else:
-            boton.clicked.connect(lambda _=False, cb=callback, t=etiqueta: self._ejecutar_tarea(cb, t))
+            boton.clicked.connect(
+                lambda _=False, cb=callback, t=etiqueta, ic=clave_icono: self._ejecutar_tarea(cb, t, ic)
+            )
         return boton
 
-    def _ejecutar_tarea(self, callback, etiqueta: str) -> None:
+    def _ejecutar_tarea(self, callback, etiqueta: str, clave_icono: str) -> None:
         """Guarda la etiqueta del botón recién clickeado para que
         `_mostrar()` la use como título de la subventana que se abra
         (si el callback abre una) — "el título tiene que decir la
@@ -566,6 +600,7 @@ class MainMenuWindow(QMainWindow):
             return
         self._titulo_tarea_actual = etiqueta
         self._clave_tarea_actual = clave
+        self._clave_icono_actual = clave_icono
         callback()
 
     # ------------------------------------------------------------------
@@ -592,8 +627,9 @@ class MainMenuWindow(QMainWindow):
         fila.addSpacing(40)
 
         btn_salir = QPushButton("Salir")
-        btn_salir.setIcon(icono("salir", 22))
-        btn_salir.setIconSize(QSize(22, 22))
+        # Ícono casi al doble (pedido del usuario, 2026-08-20).
+        btn_salir.setIcon(icono("salir", 40))
+        btn_salir.setIconSize(QSize(40, 40))
         # Más grande y con letra en verde oscuro (feedback del usuario,
         # 2026-08-16) — se distingue a propósito del verde lleno que usa
         # el resto de los botones de la app, es la acción de salir.
@@ -756,6 +792,11 @@ class MainMenuWindow(QMainWindow):
         titulo_tarea = getattr(self, "_titulo_tarea_actual", None) or ventana.windowTitle() or "Ventana"
         titulo = f"{self._seccion_actual} - {titulo_tarea}" if self._seccion_actual else titulo_tarea
         ventana.setWindowTitle(titulo)
+        # Cada ventana muestra el mismo glifo que tenía el botón del menú
+        # que la abrió (pedido del usuario, 2026-08-20) — `clave_icono`
+        # viaja desde `_crear_boton_tarea` vía `_ejecutar_tarea`.
+        icono_ventana = icono(getattr(self, "_clave_icono_actual", "app"), 32)
+        ventana.setWindowIcon(icono_ventana)
         # Sin esto, QMdiSubWindow sólo se oculta al cerrar (no se destruye
         # de verdad) — cada pantalla abre su propia sesión de BD
         # (`get_session()`) y no tiene sentido dejarla viva-pero-oculta
@@ -779,6 +820,10 @@ class MainMenuWindow(QMainWindow):
         tamano_pedido = ventana.size()
         subventana = self.mdi.addSubWindow(ventana)
         subventana.resize(tamano_pedido)
+        # `QMdiSubWindow` no siempre hereda el ícono del widget interno
+        # por sí solo — se setea explícito para que el glifo se vea
+        # también en la barra de título de la subventana dentro del MDI.
+        subventana.setWindowIcon(icono_ventana)
 
         # Bug real de Qt (confirmado con un script de prueba aislado,
         # `QMdiArea.addSubWindow` + cerrar el widget interno): cerrar el

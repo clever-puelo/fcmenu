@@ -72,7 +72,7 @@ from .decimals import format_decimal
 from .detalle_grid import DetalleGrid
 from .nota_cliente_dialog import NotaClienteDialog
 from .pdf_preview_dialog import PdfPreviewDialog
-from .widgets import crear_recuadro_destacado, redimensionar_pct_pantalla
+from .widgets import crear_recuadro_destacado, redimensionar_pct_pantalla, texto_contacto_cliente
 
 # CUIT del emisor — hardcodeado también en el legacy (`ConectaAFIP()`,
 # `WSFE.Cuit = "33703467909"`, empresa "ALESTEL SRL" ya confirmada en la
@@ -155,12 +155,16 @@ class FacturadorWindow(QMainWindow):
         # Próx.Nº/Letra + botón de la ronda anterior quedaba muy
         # apretado en `fila_datos`, junto con Vendedor/Forma Ped./
         # Dólares).
+        # Código+nombre a la izquierda, botón cambiar-cliente a la
+        # derecha (antes de "Notas") — pedido del usuario, 2026-08-20:
+        # que el operador pueda contactar rápido al cliente ante una duda
+        # al facturar, sin recorrer otra pantalla.
         fila_cliente = QHBoxLayout()
+        self.lbl_cliente = QLabel("(sin cliente elegido)")
+        fila_cliente.addWidget(self.lbl_cliente, stretch=1)
         self.btn_elegir_cliente = QPushButton(self.TEXTO_BTN_ELEGIR_CLIENTE)
         self.btn_elegir_cliente.clicked.connect(self._on_elegir_cliente)
         fila_cliente.addWidget(self.btn_elegir_cliente)
-        self.lbl_cliente = QLabel("(sin cliente elegido)")
-        fila_cliente.addWidget(self.lbl_cliente, stretch=1)
         self.btn_nota_cliente = QPushButton("Nota Clte.")
         self.btn_nota_cliente.setEnabled(False)
         self.btn_nota_cliente.clicked.connect(self._on_nota_cliente)
@@ -169,6 +173,10 @@ class FacturadorWindow(QMainWindow):
         self.btn_nueva.clicked.connect(self._nueva_factura)
         fila_cliente.addWidget(self.btn_nueva)
         layout.addLayout(fila_cliente)
+
+        # Localidad/Teléfono/Email del cliente elegido (ídem).
+        self.lbl_cliente_contacto = QLabel("—")
+        layout.addWidget(self.lbl_cliente_contacto)
 
         # Abajo sólo queda "Próx. Nº" (+ "Letra", en la misma línea) —
         # ya no compite por espacio con el botón "Nueva".
@@ -319,6 +327,7 @@ class FacturadorWindow(QMainWindow):
         cliente = self.cliente_actual
         if cliente is None:
             self.lbl_cliente.setText("(sin cliente elegido)")
+            self.lbl_cliente_contacto.setText("—")
             self.btn_nota_cliente.setEnabled(False)
             self.tiene_nota_cliente = False
             self.btn_nota_cliente.setStyleSheet("")
@@ -349,6 +358,7 @@ class FacturadorWindow(QMainWindow):
                 return
 
         self.lbl_cliente.setText(f"{cliente.CODIGO} — {(cliente.NOMB or '').strip()} — CUIT {cliente.CUIT or 's/d'}")
+        self.lbl_cliente_contacto.setText(texto_contacto_cliente(cliente))
         self.btn_nota_cliente.setEnabled(True)
         self.btn_elegir_cliente.setText(self.TEXTO_BTN_CAMBIAR_CLIENTE)
 

@@ -11,6 +11,7 @@ import sys
 
 from PyQt6.QtWidgets import QApplication
 
+from .iconos import icono
 from .totales_diarios_window import TotalesDiariosWindow
 from .theme import aplicar_tema
 
@@ -19,6 +20,7 @@ def main() -> int:
     app = QApplication(sys.argv)
     aplicar_tema(app)
     ventana = TotalesDiariosWindow()
+    ventana.setWindowIcon(icono("totales", 32))
     ventana.show()
     return app.exec()
 

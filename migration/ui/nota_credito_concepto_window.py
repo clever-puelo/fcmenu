@@ -85,7 +85,13 @@ from .cliente_busqueda_window import ClienteBusquedaWindow
 from .comprobante_aplicar_dialog import ComprobanteAplicarDialog
 from .decimals import format_decimal
 from .nota_cliente_dialog import NotaClienteDialog
-from .widgets import MontoLineEdit, UpperCaseLineEdit, crear_recuadro_destacado, redimensionar_pct_pantalla
+from .widgets import (
+    MontoLineEdit,
+    UpperCaseLineEdit,
+    crear_recuadro_destacado,
+    redimensionar_pct_pantalla,
+    texto_contacto_cliente,
+)
 
 CUIT_EMISOR_DEFAULT = "33703467909"  # ídem FacturadorWindow, ver ese docstring
 
@@ -166,6 +172,13 @@ class NotaCreditoConceptoWindow(QMainWindow):
         fila_tipo.addWidget(self.radio_nc)
         fila_tipo.addWidget(self.radio_nd)
         fila_tipo.addStretch()
+        # Cambiar-cliente antes de "Notas" (pedido del usuario,
+        # 2026-08-20) — esta ventana ya tenía "Notas"/"Nueva" acá arriba
+        # (ronda anterior, 2026-08-19), así que el botón de cliente se
+        # suma a esta misma línea en vez de a `fila_cliente`.
+        self.btn_elegir_cliente = QPushButton(self.TEXTO_BTN_ELEGIR_CLIENTE)
+        self.btn_elegir_cliente.clicked.connect(self._on_elegir_cliente)
+        fila_tipo.addWidget(self.btn_elegir_cliente)
         self.btn_nota_cliente = QPushButton("Nota Clte.")
         self.btn_nota_cliente.setEnabled(False)
         self.btn_nota_cliente.clicked.connect(self._on_nota_cliente)
@@ -175,15 +188,12 @@ class NotaCreditoConceptoWindow(QMainWindow):
         fila_tipo.addWidget(self.btn_nueva)
         layout.addLayout(fila_tipo)
 
-        # "Aplicar a" ocupa el lugar que dejaron libres "Nota Clte."/
-        # "Nueva" en esta línea — abre la ventana flotante de selección
-        # de Factura/ND a cancelar (`ComprobanteAplicarDialog`), sólo
-        # visible/habilitado para Nota de Crédito (Nota de Débito no
-        # imputa nada, ver docstring del módulo).
+        # Código+nombre a la izquierda; "Aplicar a" abre la ventana
+        # flotante de selección de Factura/ND a cancelar
+        # (`ComprobanteAplicarDialog`), sólo visible/habilitado para Nota
+        # de Crédito (Nota de Débito no imputa nada, ver docstring del
+        # módulo).
         fila_cliente = QHBoxLayout()
-        self.btn_elegir_cliente = QPushButton(self.TEXTO_BTN_ELEGIR_CLIENTE)
-        self.btn_elegir_cliente.clicked.connect(self._on_elegir_cliente)
-        fila_cliente.addWidget(self.btn_elegir_cliente)
         self.lbl_cliente = QLabel("(sin cliente elegido)")
         fila_cliente.addWidget(self.lbl_cliente, stretch=1)
         self.btn_aplicar_a = QPushButton("Aplicar a...")
@@ -191,6 +201,10 @@ class NotaCreditoConceptoWindow(QMainWindow):
         self.btn_aplicar_a.clicked.connect(self._on_aplicar_a)
         fila_cliente.addWidget(self.btn_aplicar_a)
         layout.addLayout(fila_cliente)
+
+        # Localidad/Teléfono/Email del cliente elegido (ídem).
+        self.lbl_cliente_contacto = QLabel("—")
+        layout.addWidget(self.lbl_cliente_contacto)
 
         fila_datos = QHBoxLayout()
         fila_datos.addWidget(QLabel("Motivo :"))
@@ -353,6 +367,7 @@ class NotaCreditoConceptoWindow(QMainWindow):
         self._refrescar_panel_comprobante()
         if cliente is None:
             self.lbl_cliente.setText("(sin cliente elegido)")
+            self.lbl_cliente_contacto.setText("—")
             self.btn_nota_cliente.setEnabled(False)
             self.btn_aplicar_a.setEnabled(False)
             self.tiene_nota_cliente = False
@@ -363,6 +378,7 @@ class NotaCreditoConceptoWindow(QMainWindow):
             return
 
         self.lbl_cliente.setText(f"{cliente.CODIGO} — {(cliente.NOMB or '').strip()} — CUIT {cliente.CUIT or 's/d'}")
+        self.lbl_cliente_contacto.setText(texto_contacto_cliente(cliente))
         self.btn_nota_cliente.setEnabled(True)
         self.btn_aplicar_a.setEnabled(True)
         self.btn_elegir_cliente.setText(self.TEXTO_BTN_CAMBIAR_CLIENTE)

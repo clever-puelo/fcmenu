@@ -11,6 +11,7 @@ import sys
 
 from PyQt6.QtWidgets import QApplication
 
+from .iconos import icono
 from .listados_window import ListadosWindow
 from .theme import aplicar_tema
 
@@ -23,6 +24,7 @@ def main() -> int:
     # ListadosWindow) — "Clientes" como default razonable para probar
     # standalone.
     ventana = ListadosWindow(reporte_inicial="clientes")
+    ventana.setWindowIcon(icono("listados", 32))
     ventana.show()
     return app.exec()
 

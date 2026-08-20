@@ -10,6 +10,7 @@ import sys
 
 from PyQt6.QtWidgets import QApplication
 
+from .iconos import icono
 from .tablas_window import TablasWindow
 from .theme import aplicar_tema
 
@@ -18,6 +19,7 @@ def main() -> int:
     app = QApplication(sys.argv)
     aplicar_tema(app)
     ventana = TablasWindow()
+    ventana.setWindowIcon(icono("tablas", 32))
     ventana.show()
     return app.exec()
 

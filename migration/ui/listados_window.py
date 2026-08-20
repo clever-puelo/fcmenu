@@ -347,7 +347,7 @@ class ListadosWindow(QMainWindow):
         return generar_pdf_listado(
             titulo="Lista de Precios", subtitulo=f"{len(filas)} artículos",
             columnas=["Sección", "Código", "Descripción", "Precio"],
-            filas=datos, columnas_derecha=(3,), nombre_archivo="lista_precios.pdf",
+            filas=datos, columnas_derecha=(3,), apaisado=False, nombre_archivo="lista_precios.pdf",
         )
 
     def _pdf_subdiario_ventas(self):
@@ -356,10 +356,12 @@ class ListadosWindow(QMainWindow):
         if not filas:
             return None
         datos = []
+        valores = []
         total = Decimal("0")
         for f in filas:
             neto = (f.GRINS or Decimal("0")) + (f.IVAINS or Decimal("0"))
             total += neto
+            valores.append(neto)
             datos.append([
                 f.FECHA.strftime("%d/%m/%Y") if f.FECHA else "",
                 ETIQUETAS_TIPO_CTASCTE.get(int(f.TIPO) if (f.TIPO or "").strip().isdigit() else -1, "--"),
@@ -372,7 +374,8 @@ class ListadosWindow(QMainWindow):
             titulo="Subdiario de Ventas", subtitulo=f"{desde.strftime('%d/%m/%Y')} al {hasta.strftime('%d/%m/%Y')}",
             columnas=["Fecha", "Tipo", "Comprobante", "Cód.", "Cliente", "Gravado", "IVA", "Total"],
             filas=datos, columnas_derecha=(0, 3, 5, 6, 7),
-            pie=[("Total", f"$ {format_decimal(total)}")], nombre_archivo="subdiario_ventas.pdf",
+            columna_transporte=7, valores_transporte=valores,
+            pie=[("Total", f"$ {format_decimal(total)}", 7)], nombre_archivo="subdiario_ventas.pdf",
         )
 
     def _pdf_subdiario_cobranzas(self):
@@ -381,10 +384,12 @@ class ListadosWindow(QMainWindow):
         if not movimientos:
             return None
         datos = []
+        valores = []
         total = Decimal("0")
         for m in movimientos:
             importe = m.IMPTE or Decimal("0")
             total += importe
+            valores.append(importe)
             cliente = self.repos.cliente().by_codigo(m.CLTE) if m.CLTE else None
             datos.append([
                 m.FECHA.strftime("%d/%m/%Y") if m.FECHA else "",
@@ -396,7 +401,9 @@ class ListadosWindow(QMainWindow):
             titulo="Subdiario de Cobranzas", subtitulo=f"{desde.strftime('%d/%m/%Y')} al {self.fecha_hasta.date().toPyDate().strftime('%d/%m/%Y')}",
             columnas=["Fecha", "Recibo", "Cód.", "Cliente", "Importe"],
             filas=datos, columnas_derecha=(0, 2, 4),
-            pie=[("Total", f"$ {format_decimal(total)}")], nombre_archivo="subdiario_cobranzas.pdf",
+            columna_transporte=4, valores_transporte=valores,
+            apaisado=False,
+            pie=[("Total", f"$ {format_decimal(total)}", 4)], nombre_archivo="subdiario_cobranzas.pdf",
         )
 
     def _pdf_ingresos_brutos(self):
@@ -409,12 +416,15 @@ class ListadosWindow(QMainWindow):
              format_decimal(f.gravado), format_decimal(f.iva), format_decimal(f.total)]
             for f in filas
         ]
-        total = sum((f.total for f in filas), Decimal("0"))
+        valores = [f.total for f in filas]
+        total = sum(valores, Decimal("0"))
         return generar_pdf_listado(
             titulo="Ingresos Brutos", subtitulo=f"{desde.strftime('%d/%m/%Y')} al {self.fecha_hasta.date().toPyDate().strftime('%d/%m/%Y')}",
             columnas=["Provincia", "Tipo", "Gravado", "IVA", "Total"],
             filas=datos, columnas_derecha=(2, 3, 4),
-            pie=[("Total", f"$ {format_decimal(total)}")], nombre_archivo="ingresos_brutos.pdf",
+            columna_transporte=4, valores_transporte=valores,
+            apaisado=False,
+            pie=[("Total", f"$ {format_decimal(total)}", 4)], nombre_archivo="ingresos_brutos.pdf",
         )
 
     def _pdf_deuda_pendiente(self, reporte: str):
@@ -423,11 +433,13 @@ class ListadosWindow(QMainWindow):
         if not grupos:
             return None
         datos = []
+        valores = []
         total = Decimal("0")
         for cliente, pendientes in grupos:
             for p in pendientes:
                 debe = p.DEBE or Decimal("0")
                 total += debe
+                valores.append(debe)
                 datos.append([
                     str(cliente.CODIGO), (cliente.NOMB or "").strip(),
                     ETIQUETAS_TIPO_CTASCTE.get(p.TIPO, "--"), str(p.CPBTE or ""),
@@ -440,7 +452,9 @@ class ListadosWindow(QMainWindow):
             titulo=titulo, subtitulo=f"{self._descripcion_filtro_cliente()} — {len(grupos)} clientes con deuda",
             columnas=["Cód.", "Cliente", "Tipo", "Cpbte.", "Fecha", "Vto.", "Debe"],
             filas=datos, columnas_derecha=(0, 3, 6),
-            pie=[("Total", f"$ {format_decimal(total)}")], nombre_archivo=f"{reporte}.pdf",
+            columna_transporte=6, valores_transporte=valores,
+            apaisado=False,
+            pie=[("Total", f"$ {format_decimal(total)}", 6)], nombre_archivo=f"{reporte}.pdf",
         )
 
     def _pdf_estado_cuenta(self):
@@ -463,7 +477,7 @@ class ListadosWindow(QMainWindow):
         return generar_pdf_listado(
             titulo="Estado de Cuenta", subtitulo=f"{self._descripcion_filtro_cliente()} — {len(grupos)} clientes",
             columnas=["Cód.", "Cliente", "Fecha", "Tipo", "Cpbte.", "Importe", "Saldo"],
-            filas=datos, columnas_derecha=(0, 4, 5, 6), nombre_archivo="estado_cuenta.pdf",
+            filas=datos, columnas_derecha=(0, 4, 5, 6), apaisado=False, nombre_archivo="estado_cuenta.pdf",
         )
 
     def _pdf_saldos(self):
@@ -472,12 +486,15 @@ class ListadosWindow(QMainWindow):
         if not filas:
             return None
         datos = [[str(f["codigo"]), f["nombre"], format_decimal(f["saldo"])] for f in filas]
-        total = sum((f["saldo"] for f in filas), Decimal("0"))
+        valores = [f["saldo"] for f in filas]
+        total = sum(valores, Decimal("0"))
         return generar_pdf_listado(
             titulo="Saldos de Cta. Cte.", subtitulo=f"{self._descripcion_filtro_cliente()} — {len(filas)} clientes",
             columnas=["Cód.", "Cliente", "Saldo"],
             filas=datos, columnas_derecha=(0, 2),
-            pie=[("Total", f"$ {format_decimal(total)}")], nombre_archivo="saldos_ctacte.pdf",
+            columna_transporte=2, valores_transporte=valores,
+            apaisado=False,
+            pie=[("Total", f"$ {format_decimal(total)}", 2)], nombre_archivo="saldos_ctacte.pdf",
         )
 
     def _pdf_percepciones_arba(self):
@@ -494,8 +511,12 @@ class ListadosWindow(QMainWindow):
             titulo="Percepciones ARBA", subtitulo=f"{desde.strftime('%d/%m/%Y')} al {self.fecha_hasta.date().toPyDate().strftime('%d/%m/%Y')}",
             columnas=["Fecha", "L.", "Comprobante", "Cliente", "CUIT", "IVA", "Imponible", "Percepción"],
             filas=datos, columnas_derecha=(0, 2, 6, 7),
-            pie=[("Total Imponible", f"$ {format_decimal(resultado.total_imponible)}"),
-                 ("Total Percepción", f"$ {format_decimal(resultado.total_percepcion)}")],
+            # Dos totales finales, cada uno bajo su propia columna real —
+            # sin "Viene/Transporte" por página acá (dos columnas de
+            # importe corridas a la vez no aportan tanto en un reporte
+            # que no suele ser muy largo).
+            pie=[("Total Imponible", f"$ {format_decimal(resultado.total_imponible)}", 6),
+                 ("Total Percepción", f"$ {format_decimal(resultado.total_percepcion)}", 7)],
             nombre_archivo="percepciones_arba.pdf",
         )
         # Archivo de presentación .txt — réplica literal del formato del
@@ -519,15 +540,21 @@ class ListadosWindow(QMainWindow):
              format_decimal(f.importe), "ND Rechazado" if f.es_nd_rechazada else ""]
             for f in resultado.filas
         ]
+        valores = [f.importe for f in resultado.filas]
         return generar_pdf_listado(
             titulo="Comisiones por Cobranzas", subtitulo=self.combo_vendedor.currentText(),
             columnas=["Cód.", "Cliente", "Cpbte.", "Fecha", "Importe", "Obs."],
             filas=datos, columnas_derecha=(0, 2, 4),
+            columna_transporte=4, valores_transporte=valores,
             pie=[
-                ("Total Cobrado", f"$ {format_decimal(resultado.total_cobrado)}"),
-                ("ND Rechazadas", f"{resultado.total_nd_rechazadas} — $ {format_decimal(resultado.total_nd_rechazadas_importe)}"),
-                ("Neto (base comisión)", f"$ {format_decimal(resultado.neto)}"),
+                ("Total Cobrado", f"$ {format_decimal(resultado.total_cobrado)}", 4),
+                # Compuesto (cantidad + importe), no un importe puro — va
+                # en la columna 0 (span), no bajo "Importe" como los otros
+                # dos totales de esta lista.
+                ("ND Rechazadas", f"{resultado.total_nd_rechazadas} — $ {format_decimal(resultado.total_nd_rechazadas_importe)}", 0),
+                ("Neto (base comisión)", f"$ {format_decimal(resultado.neto)}", 4),
             ],
+            apaisado=False,
             nombre_archivo="comisiones_cobranzas.pdf",
         )
 
@@ -543,14 +570,16 @@ class ListadosWindow(QMainWindow):
              format_decimal(f.iva), format_decimal(f.percepcion_ib), format_decimal(f.total)]
             for f in filas
         ]
-        total = sum((f.total for f in filas), Decimal("0"))
+        valores = [f.total for f in filas]
+        total = sum(valores, Decimal("0"))
         return generar_pdf_listado(
             titulo="Subdiario Vtas. (Comisiones)",
             subtitulo=f"{desde.strftime('%d/%m/%Y')} al {self.fecha_hasta.date().toPyDate().strftime('%d/%m/%Y')}"
             + (f" — {self.combo_vendedor.currentText()}" if vend else " — Todos los Vendedores"),
             columnas=["Fecha", "L.", "Comprobante", "Cód.", "Cliente", "IVA", "Gravado", "Exento", "IVA $", "Perc.IB", "Total"],
             filas=datos, columnas_derecha=(0, 3, 6, 7, 8, 9, 10),
-            pie=[("Total", f"$ {format_decimal(total)}")], nombre_archivo="subdiario_ventas_comisiones.pdf",
+            columna_transporte=10, valores_transporte=valores,
+            pie=[("Total", f"$ {format_decimal(total)}", 10)], nombre_archivo="subdiario_ventas_comisiones.pdf",
         )
 
     # ------------------------------------------------------------------
