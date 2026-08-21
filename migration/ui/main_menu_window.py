@@ -133,6 +133,8 @@ PCT_MDI_POR_CLASE: dict[str, tuple[float, float]] = {
     "CobranzasZonaWindow": (90, 85),
     "NotaCreditoConceptoWindow": (80, 85),
     "NotaCreditoMercaderiaWindow": (90, 88),
+    "CotizacionVentaWindow": (90, 85),
+    "NotaCreditoInternaWindow": (65, 65),
     "TotalesDiariosWindow": (85, 88),
     "ChequesConsultaWindow": (75, 88),
     "VentasSeccionWindow": (80, 88),
@@ -706,17 +708,22 @@ class MainMenuWindow(QMainWindow):
             # débito... colocar la leyenda 'Nota de Crédito y Débito'")
             # — la elección real entre Crédito/Débito vive DENTRO de la
             # ventana (radio Tipo), no hace falta un botón por tipo.
-            # Cotización/Remito siguen deshabilitados ("Próximamente",
-            # `callback=None`, mismo patrón que "Constancia AFIP" en
-            # Varios) — Remito no existe en el legacy (confirmado, sin
-            # `.frm` propio); Cotización es un tipo de comprobante del
-            # Facturador (TipoFac=4, sin CAE), no la Cotización del Dólar
-            # ya migrada.
+            # Remito sigue deshabilitado ("Próximamente", `callback=None`,
+            # mismo patrón que "Constancia AFIP" en Varios) — no existe en
+            # el legacy (confirmado, sin `.frm` propio). Cotización
+            # habilitada (2026-08-20) — comprobante del Facturador sin CAE
+            # (`CabFact.frm TipoFac=4`), NO la Cotización del Dólar
+            # (`_abrir_cotizacion`, sección Varios).
             "Ingreso": [
                 ("factura", "Factura", self._abrir_factura),
                 ("ncredito", "Nota de Crédito y Débito", self._abrir_nota_credito),
                 ("ncredito_merc", "N.Créd. x Mercadería", self._abrir_nota_credito_mercaderia),
-                ("cotizacion_venta", "Cotización", None),
+                # Mismo grupo "Ingreso" que en el legacy (FCMENU.frm:597,
+                # "N.Crédito Interna" — deshabilitada ahí en el diseño
+                # original, habilitada acá 2026-08-20 tras analizar
+                # `NCInterna.frm` completo).
+                ("nci", "N.Créd. Interna", self._abrir_nota_credito_interna),
+                ("cotizacion_venta", "Cotización", self._abrir_cotizacion_venta),
                 ("remito", "Remito", None),
                 ("recibo", "Recibos", self._abrir_recibo),
                 ("precios", "Precios", self._abrir_mod_precios),
@@ -1041,6 +1048,19 @@ class MainMenuWindow(QMainWindow):
         from .nota_credito_mercaderia_window import NotaCreditoMercaderiaWindow
 
         self._mostrar(NotaCreditoMercaderiaWindow())
+
+    def _abrir_nota_credito_interna(self) -> None:
+        from .nota_credito_interna_window import NotaCreditoInternaWindow
+
+        self._mostrar(NotaCreditoInternaWindow())
+
+    def _abrir_cotizacion_venta(self) -> None:
+        # No confundir con `_abrir_cotizacion` (Cotización del Dólar,
+        # sección Varios) — ésta es el comprobante sin CAE del
+        # Facturador (`CabFact.frm TipoFac=4`).
+        from .cotizacion_venta_window import CotizacionVentaWindow
+
+        self._mostrar(CotizacionVentaWindow())
 
     def _abrir_stock_movimiento(self) -> None:
         from .stock_movimiento_window import StockMovimientoWindow

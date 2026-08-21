@@ -13,10 +13,17 @@ para esta rama, ver `CabFact.frm Sub Combo5_Click`) + `PieFact.frm` +
   Cliente y elige qué renglones reales devolver — el precio acreditado
   es el que realmente se facturó (`Fcestad1.PVTA`/`.IMPTE` de ese
   renglón puntual), no el de catálogo hoy.
-- Selección de renglones por **renglón completo** (checkbox), no por
-  cantidad parcial editable — simplificación deliberada de esta primera
-  versión (avisar si hace falta devolución parcial de un renglón, se
-  puede agregar después).
+- **Devolución PARCIAL de cantidad** (pedido explícito del usuario,
+  2026-08-20 — reemplaza la primera versión, que sólo dejaba tildar el
+  renglón completo): la columna "Cant. a Devolver" trae precargada la
+  cantidad COMPLETA vendida en ese renglón (`Fcestad1.CANT`), editable
+  hacia abajo (nunca por encima de lo vendido); en 0 el renglón no se
+  devuelve (equivalente al checkbox "sin tildar" de la versión
+  anterior). El importe/pulg/mtr/milim/telas de ese renglón se
+  prorratean linealmente contra la cantidad editada — ver
+  `renglon_devolucion_parcial()` (`services.py`) para la fórmula exacta
+  y su límite conocido (renglones sin `CANT` real, ej. tela por metro,
+  quedan todo-o-nada, sin poder partirse).
 - Emitida la Nota de Crédito, el Stock del artículo se repone
   automáticamente (`EmisionNotaCreditoMercaderiaService`, reversa real
   de `EmiFact.frm:1864-1928`) y se imputa contra un comprobante con
@@ -24,9 +31,13 @@ para esta rama, ver `CabFact.frm Sub Combo5_Click`) + `PieFact.frm` +
   mecanismo que `NotaCreditoConceptoWindow`) — no necesariamente la
   misma Factura que se está devolviendo, igual que en el legacy.
 
-**Fuera de alcance de esta primera versión** (igual que "Concepto
-Libre"): sin vista previa en PDF, sin percepción de IIBB (el legacy la
-permite estructuralmente pero no es un caso real de negocio para una
+**Vista previa en PDF** (agregada 2026-08-20, pedido del usuario):
+mismo patrón Boceto→Grabar que `FacturadorWindow`, reusando
+`DatosFacturaPDF`/`generar_pdf_factura` directo (esta ventana ya arma
+`RenglonEmision`/`TotalFactura`, no hace falta adaptador).
+
+**Fuera de alcance**: sin percepción de IIBB (el legacy la permite
+estructuralmente pero no es un caso real de negocio para una
 devolución — avisar si hace falta).
 """
 
@@ -34,7 +45,7 @@ from __future__ import annotations
 
 import os
 from datetime import date
-from decimal import Decimal
+from decimal import Decimal, InvalidOperation
 from typing import Optional
 
 from PyQt6.QtCore import Qt, QTimer
@@ -59,22 +70,28 @@ from migration.afip import (
     codigo_afip,
     condicion_iva_receptor,
     crear_afip_provider,
+    generar_qr_afip,
     punto_venta_por_tipo,
 )
 from migration.db import get_session
 from migration.models import Cliente, Ctascte, FcivaVta
+from migration.pdf import DatosFacturaPDF, generar_pdf_factura
+from migration.provincias import nombre_provincia
 from migration.repository import ETIQUETAS_TIPO_CTASCTE, RepositoryFactory
 from migration.services import (
     CuentaCorrienteService,
     EmisionNotaCreditoMercaderiaService,
     FacturaService,
     RenglonEmision,
+    condicion_venta_texto,
+    renglon_devolucion_parcial,
 )
 
 from .cliente_busqueda_window import ClienteBusquedaWindow
 from .comprobante_aplicar_dialog import ComprobanteAplicarDialog
 from .decimals import format_decimal
 from .nota_cliente_dialog import NotaClienteDialog
+from .pdf_preview_dialog import PdfPreviewDialog
 from .widgets import (
     compactar_alto_filas,
     crear_recuadro_destacado,
@@ -86,13 +103,13 @@ CUIT_EMISOR_DEFAULT = "33703467909"  # ídem FacturadorWindow
 TIPO_NC = 2
 MOTIVO_DEV_MERC = 1
 
-COL_CHECK = 0
-COL_CODIGO = 1
-COL_DESCRIPCION = 2
-COL_CANTIDAD = 3
+COL_CODIGO = 0
+COL_DESCRIPCION = 1
+COL_CANT_VENDIDA = 2
+COL_CANT_DEVOLVER = 3
 COL_PRECIO = 4
 COL_IMPORTE = 5
-COLUMNAS_RENGLONES = ["", "Sección/Código", "Descripción", "Cantidad", "Precio Unit.", "Importe"]
+COLUMNAS_RENGLONES = ["Sección/Código", "Descripción", "Cant. Vendida", "Cant. a Devolver", "Precio Unit.", "Importe a Acreditar"]
 
 
 class NotaCreditoMercaderiaWindow(QMainWindow):
@@ -192,16 +209,24 @@ class NotaCreditoMercaderiaWindow(QMainWindow):
     # Renglones de la Factura original (checkbox = se devuelve)
     # ------------------------------------------------------------------
     def _armar_renglones(self) -> QGroupBox:
-        self.grupo_renglones = QGroupBox("Renglones de la Factura Original — tildá los que se devuelven")
+        self.grupo_renglones = QGroupBox(
+            'Renglones de la Factura Original — "Cant. a Devolver" editable (0 = no se devuelve ese renglón)'
+        )
         grupo = self.grupo_renglones
         layout = QVBoxLayout(grupo)
 
         self.tabla_renglones = QTableWidget(0, len(COLUMNAS_RENGLONES))
         self.tabla_renglones.setHorizontalHeaderLabels(COLUMNAS_RENGLONES)
-        self.tabla_renglones.setEditTriggers(QAbstractItemView.EditTrigger.NoEditTriggers)
+        # Edición habilitada a nivel tabla, pero sólo la columna "Cant. a
+        # Devolver" trae el flag `ItemIsEditable` por celda (ver
+        # `_agregar_fila_renglon`) — el resto queda de sólo lectura pese
+        # a este trigger.
+        self.tabla_renglones.setEditTriggers(
+            QAbstractItemView.EditTrigger.DoubleClicked | QAbstractItemView.EditTrigger.EditKeyPressed
+        )
         self.tabla_renglones.verticalHeader().setVisible(False)
         compactar_alto_filas(self.tabla_renglones)
-        self.tabla_renglones.itemChanged.connect(self._on_check_renglon_cambiado)
+        self.tabla_renglones.itemChanged.connect(self._on_cantidad_renglon_cambiada)
         layout.addWidget(self.tabla_renglones)
 
         return grupo
@@ -229,44 +254,95 @@ class NotaCreditoMercaderiaWindow(QMainWindow):
         cantidad = renglon.CANT or Decimal("0")
         precio = renglon.PVTA or Decimal("0")
         importe = renglon.IMPTE or Decimal("0")
+        # Sin Cant. real (ej. tela vendida por Mtr) no hay base para
+        # prorratear (ver `renglon_devolucion_parcial`) — la fila queda
+        # todo-o-nada: "Cant. a Devolver" se prellena en "1" (= incluir
+        # el renglón completo), editable a "0" para excluirlo, pero
+        # nunca partible.
+        tiene_cantidad_real = cantidad > 0
+        valor_prellenado = cantidad if tiene_cantidad_real else Decimal("1")
 
         fila = self.tabla_renglones.rowCount()
         self.tabla_renglones.insertRow(fila)
-        item_check = QTableWidgetItem()
-        item_check.setFlags(Qt.ItemFlag.ItemIsUserCheckable | Qt.ItemFlag.ItemIsEnabled | Qt.ItemFlag.ItemIsSelectable)
-        item_check.setCheckState(Qt.CheckState.Unchecked)
-        self.tabla_renglones.setItem(fila, COL_CHECK, item_check)
-        self.tabla_renglones.setItem(fila, COL_CODIGO, QTableWidgetItem(f"{cod1}/{cod2}"))
-        self.tabla_renglones.setItem(fila, COL_DESCRIPCION, QTableWidgetItem(descripcion))
-        self.tabla_renglones.setItem(fila, COL_CANTIDAD, QTableWidgetItem(format_decimal(cantidad) if cantidad else "1"))
-        self.tabla_renglones.setItem(fila, COL_PRECIO, QTableWidgetItem(f"$ {format_decimal(precio)}"))
-        self.tabla_renglones.setItem(fila, COL_IMPORTE, QTableWidgetItem(f"$ {format_decimal(importe)}"))
+
+        self.tabla_renglones.setItem(fila, COL_CODIGO, self._item_solo_lectura(f"{cod1}/{cod2}"))
+        self.tabla_renglones.setItem(fila, COL_DESCRIPCION, self._item_solo_lectura(descripcion))
+        self.tabla_renglones.setItem(
+            fila,
+            COL_CANT_VENDIDA,
+            self._item_solo_lectura(format_decimal(cantidad) if tiene_cantidad_real else "— (por Mtr)"),
+        )
+
+        item_cant_devolver = QTableWidgetItem(format_decimal(valor_prellenado))
+        item_cant_devolver.setFlags(
+            Qt.ItemFlag.ItemIsEditable | Qt.ItemFlag.ItemIsEnabled | Qt.ItemFlag.ItemIsSelectable
+        )
+        item_cant_devolver.setTextAlignment(Qt.AlignmentFlag.AlignRight | Qt.AlignmentFlag.AlignVCenter)
+        self.tabla_renglones.setItem(fila, COL_CANT_DEVOLVER, item_cant_devolver)
+
+        self.tabla_renglones.setItem(fila, COL_PRECIO, self._item_solo_lectura(f"$ {format_decimal(precio)}"))
+        self.tabla_renglones.setItem(fila, COL_IMPORTE, self._item_solo_lectura(f"$ {format_decimal(importe)}"))
         self._renglones_reales.append(renglon)
 
-    def _on_check_renglon_cambiado(self, item: QTableWidgetItem) -> None:
-        if item.column() == COL_CHECK:
-            self._recalcular_totales()
+    @staticmethod
+    def _item_solo_lectura(texto: str) -> QTableWidgetItem:
+        item = QTableWidgetItem(texto)
+        item.setFlags(Qt.ItemFlag.ItemIsEnabled | Qt.ItemFlag.ItemIsSelectable)
+        return item
+
+    def _on_cantidad_renglon_cambiada(self, item: QTableWidgetItem) -> None:
+        if item.column() != COL_CANT_DEVOLVER:
+            return
+        fila = item.row()
+        if fila >= len(self._renglones_reales):
+            return
+        original = self._renglones_reales[fila]
+        cantidad_original = original.CANT or Decimal("0")
+
+        try:
+            cantidad_editada = Decimal(item.text().strip().replace(",", "."))
+        except (InvalidOperation, ValueError):
+            cantidad_editada = cantidad_original
+
+        if cantidad_editada < 0:
+            cantidad_editada = Decimal("0")
+        elif cantidad_original > 0 and cantidad_editada > cantidad_original:
+            # Nunca por encima de lo efectivamente vendido — recorte
+            # silencioso, mismo criterio que `renglon_devolucion_
+            # parcial()` (que igual lo vuelve a aplicar al emitir).
+            cantidad_editada = cantidad_original
+        elif cantidad_original <= 0 and cantidad_editada > 0:
+            # Fila todo-o-nada (sin Cant. real, ver `_agregar_fila_
+            # renglon`) — cualquier valor no-cero se normaliza a "1"
+            # ("incluir completo"), no hay partes intermedias.
+            cantidad_editada = Decimal("1")
+
+        renglon_prorrateado = renglon_devolucion_parcial(original, cantidad_editada)
+        importe_nuevo = renglon_prorrateado.importe if renglon_prorrateado is not None else Decimal("0")
+
+        self.tabla_renglones.blockSignals(True)
+        item.setText(format_decimal(cantidad_editada))
+        self.tabla_renglones.item(fila, COL_IMPORTE).setText(f"$ {format_decimal(importe_nuevo)}")
+        self.tabla_renglones.blockSignals(False)
+
+        self._recalcular_totales()
 
     def _renglones_elegidos(self) -> list[RenglonEmision]:
         resultado = []
-        for fila, renglon in enumerate(getattr(self, "_renglones_reales", [])):
-            item_check = self.tabla_renglones.item(fila, COL_CHECK)
-            if item_check is None or item_check.checkState() != Qt.CheckState.Checked:
+        for fila, original in enumerate(getattr(self, "_renglones_reales", [])):
+            item_cant = self.tabla_renglones.item(fila, COL_CANT_DEVOLVER)
+            if item_cant is None:
                 continue
-            resultado.append(
-                RenglonEmision(
-                    cod1=(renglon.COD1 or "").strip(),
-                    cod2=(renglon.COD2 or "").strip(),
-                    descripcion=self.tabla_renglones.item(fila, COL_DESCRIPCION).text(),
-                    precio_unitario=renglon.PVTA or Decimal("0"),
-                    importe=renglon.IMPTE or Decimal("0"),
-                    pulg=renglon.PULG or Decimal("0"),
-                    mtr=renglon.MTR or Decimal("0"),
-                    milim=renglon.MILIM or 0,
-                    telas=renglon.TELAS or 0,
-                    cantidad_unidades=renglon.CANT or Decimal("0"),
-                )
-            )
+            try:
+                cantidad_a_devolver = Decimal(item_cant.text().strip().replace(",", "."))
+            except (InvalidOperation, ValueError):
+                continue
+
+            renglon = renglon_devolucion_parcial(original, cantidad_a_devolver)
+            if renglon is None:
+                continue
+            renglon.descripcion = self.tabla_renglones.item(fila, COL_DESCRIPCION).text()
+            resultado.append(renglon)
         return resultado
 
     # ------------------------------------------------------------------
@@ -500,6 +576,25 @@ class NotaCreditoMercaderiaWindow(QMainWindow):
             QMessageBox.critical(self, "Nota de Crédito", f"Error al conectar con AFIP:\n{exc}")
             return
 
+        # Boceto → Grabar (mismo patrón que `FacturadorWindow._on_emitir`,
+        # pedido del usuario 2026-08-20 para las 2 ventanas de NC) — se
+        # muestra ANTES de pedir el CAE, con sello "BORRADOR" (sin
+        # CAE/QR reales todavía).
+        try:
+            datos_borrador = self._datos_pdf(letra, punto_venta, numero, fecha, renglones, total)
+            ruta_borrador = generar_pdf_factura(datos_borrador)
+        except Exception as exc:  # noqa: BLE001
+            QMessageBox.critical(self, "Nota de Crédito", f"No se pudo generar el boceto del PDF:\n{exc}")
+            return
+
+        vista_previa = PdfPreviewDialog(
+            ruta_borrador, titulo=f"Boceto — Nota de Crédito {letra} (sin CAE todavía)",
+            mostrar_boton_grabar=True, parent=self,
+        )
+        vista_previa.exec()
+        if not vista_previa.grabar:
+            return
+
         respuesta = QMessageBox.question(
             self,
             "Nota de Crédito",
@@ -552,13 +647,66 @@ class NotaCreditoMercaderiaWindow(QMainWindow):
             )
             return
 
+        qr_url = generar_qr_afip(
+            cuit_emisor=CUIT_EMISOR_DEFAULT, punto_venta=punto_venta, tipo_cbte=tipo_cbte, nro_cbte=numero,
+            importe_total=total.total, tipo_doc_receptor=80, nro_doc_receptor=self.cliente_actual.CUIT,
+            cae=resultado_cae.cae, fecha_cbte=fecha,
+        )
+        ruta_pdf = None
+        try:
+            datos_pdf = self._datos_pdf(
+                letra, punto_venta, numero, fecha, renglones, total,
+                cae=resultado_cae.cae, cae_vencimiento=resultado_cae.vencimiento, qr_url=qr_url,
+                observaciones_afip=resultado_cae.motivo,
+            )
+            ruta_pdf = generar_pdf_factura(datos_pdf)
+        except Exception as exc:  # noqa: BLE001 — YA se grabó, esto no debe revertirlo
+            QMessageBox.warning(self, "Nota de Crédito", f"Se emitió y grabó correctamente, pero el PDF falló:\n{exc}")
+
         QMessageBox.information(
             self,
             "Nota de Crédito",
             f"Nota de Crédito {letra} {punto_venta:04d}-{numero:08d} emitida.\n"
             f"CAE: {resultado_cae.cae}\nVencimiento: {resultado_cae.vencimiento}\nTotal: $ {format_decimal(total.total)}",
         )
+        if ruta_pdf is not None:
+            PdfPreviewDialog(
+                ruta_pdf, titulo=f"Nota de Crédito {letra} {punto_venta:04d}-{numero:08d} — CAE {resultado_cae.cae}",
+                parent=self,
+            ).exec()
         self._nueva()
+
+    def _datos_pdf(
+        self, letra, punto_venta, numero, fecha, renglones, total,
+        *, cae=None, cae_vencimiento=None, qr_url=None, observaciones_afip="",
+    ) -> DatosFacturaPDF:
+        """Réplica del layout ya construido para Factura — reusa
+        `DatosFacturaPDF`/`generar_pdf_factura` (mismo criterio de
+        renglones+precio real que ya usa esta ventana, ver docstring del
+        módulo), con `titulo_comprobante` propio (réplica real,
+        `EmiFact.frm:1282`: "NOTA DE CRÉDITO", sin el espaciado
+        decorativo que sólo usa Factura) y los mismos datos de Cliente/
+        "Aplicada a" agregados 2026-08-20 (hallazgo real comparando
+        contra una Factura real de muestra)."""
+        cliente = self.cliente_actual
+        comprobante = self._comprobante_seleccionado
+        return DatosFacturaPDF(
+            letra=letra, punto_venta=punto_venta, numero=numero, fecha=fecha,
+            cliente_codigo=cliente.CODIGO,
+            cliente_nombre=(cliente.NOMB or "").strip(),
+            cliente_cuit=cliente.CUIT or "",
+            cliente_civa=cliente.CIVA or 0,
+            cliente_domicilio=(cliente.DIR or "").strip(),
+            cliente_localidad=(cliente.LOC or "").strip(),
+            cliente_cp=(cliente.CP or "").strip(),
+            cliente_provincia=nombre_provincia(cliente.PCIA),
+            condicion_venta=condicion_venta_texto(self.repos, cliente.CVTA),
+            renglones=list(renglones), total=total,
+            cae=cae, cae_vencimiento=cae_vencimiento, qr_url=qr_url,
+            observaciones_afip=observaciones_afip,
+            titulo_comprobante="NOTA DE CRÉDITO",
+            aplicada_a=(comprobante.PREFIJO or 0, comprobante.CPBTE or 0, comprobante.FECHA) if comprobante else None,
+        )
 
     # ------------------------------------------------------------------
     def _hay_algo_cargado(self) -> bool:

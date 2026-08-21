@@ -39,8 +39,10 @@ from migration.services import (
     ChequeService,
     ClienteService,
     ConceptoNotaCredito,
+    CotizacionVentaService,
     CuentaCorrienteService,
     EmisionFacturaService,
+    EmisionNotaCreditoInternaService,
     EmisionNotaCreditoMercaderiaService,
     EmisionNotaCreditoService,
     EmisionReciboService,
@@ -52,6 +54,7 @@ from migration.services import (
     PagoRetencion,
     RenglonEmision,
     RenglonMovimientoStock,
+    renglon_devolucion_parcial,
     ArregloCtaCteService,
     ArregloSubdiarioService,
     ListadosService,
@@ -196,6 +199,52 @@ class TestFacturaService:
         # le aplicaba IVA inscripto además del (ya descartado) IVANI —
         # acá replicamos solo la parte de IVA inscripto, que es la vigente.
         assert total.iva == Decimal("210.00")
+
+
+# ---------------------------------------------------------------------------
+# CotizacionVentaService — Cotización (CabFact.frm TipoFac=4)
+# ---------------------------------------------------------------------------
+
+
+class TestCotizacionVentaService:
+    def test_proximo_numero_no_consume_ni_persiste(self, db):
+        """Sólo lectura — a diferencia de `confirmar_numero()`, mirar el
+        próximo número (mostrado en la cabecera) no debe grabar nada."""
+        db.add(Parametro(CLAVE="1", NUME4=5))
+        db.commit()
+
+        servicio = CotizacionVentaService(db)
+        assert servicio.proximo_numero() == 6
+        assert servicio.proximo_numero() == 6  # repetible, no incrementa
+
+        parametro = db.query(Parametro).filter(Parametro.CLAVE == "1").one()
+        assert parametro.NUME4 == 5
+
+    def test_confirmar_numero_incrementa_y_persiste_nume4(self, db):
+        """Réplica de EmiFact.frm:780-784 — secuencia propia (NUME4),
+        independiente de NUME1/NUME5 (Factura A/B)."""
+        db.add(Parametro(CLAVE="1", NUME1=999, NUME4=5))
+        db.commit()
+
+        servicio = CotizacionVentaService(db)
+        assert servicio.confirmar_numero() == 6
+        assert servicio.confirmar_numero() == 7
+
+        parametro = db.query(Parametro).filter(Parametro.CLAVE == "1").one()
+        assert parametro.NUME4 == 7
+        assert parametro.NUME1 == 999  # secuencia de Factura A intacta
+
+    def test_arranca_en_uno_si_nume4_es_nulo(self, db):
+        db.add(Parametro(CLAVE="1"))
+        db.commit()
+
+        servicio = CotizacionVentaService(db)
+        assert servicio.proximo_numero() == 1
+        assert servicio.confirmar_numero() == 1
+
+    def test_sin_parametro_configurado_tira_error_claro(self, db):
+        with pytest.raises(ValueError, match="Parametro"):
+            CotizacionVentaService(db).confirmar_numero()
 
 
 # ---------------------------------------------------------------------------
@@ -1650,6 +1699,66 @@ class TestEmisionNotaCreditoService:
 
 
 # ---------------------------------------------------------------------------
+# renglon_devolucion_parcial — devolución PARCIAL de cantidad
+# ---------------------------------------------------------------------------
+
+
+class TestRenglonDevolucionParcial:
+    def _original(self, cant="10", impte="1000", pvta="100", pulg="0", mtr="0", milim=0, telas=0):
+        return Fcestad1(
+            COD1="AA", COD2="1", CANT=Decimal(cant), IMPTE=Decimal(impte), PVTA=Decimal(pvta),
+            PULG=Decimal(pulg), MTR=Decimal(mtr), MILIM=milim, TELAS=telas,
+        )
+
+    def test_devolver_todo_da_el_mismo_importe(self, db):
+        renglon = renglon_devolucion_parcial(self._original(), Decimal("10"))
+        assert renglon.importe == Decimal("1000.00")
+        assert renglon.cantidad_unidades == Decimal("10")
+
+    def test_devolucion_parcial_prorratea_linealmente(self, db):
+        """10 unidades por $1000 ($100 c/u) — devolver 4 acredita $400,
+        no los $100 de precio unitario multiplicados aparte (mismo
+        importe FACTURADO, no de catálogo — ver docstring del módulo)."""
+        renglon = renglon_devolucion_parcial(self._original(), Decimal("4"))
+        assert renglon.importe == Decimal("400.00")
+        assert renglon.cantidad_unidades == Decimal("4")
+        assert renglon.precio_unitario == Decimal("100")  # no cambia, es el $/unidad
+
+    def test_prorratea_tambien_pulg_mtr_milim_telas(self, db):
+        original = self._original(cant="10", impte="1000", pulg="20", mtr="30", milim=100, telas=8)
+        renglon = renglon_devolucion_parcial(original, Decimal("5"))  # mitad
+        assert renglon.pulg == Decimal("10.00")
+        assert renglon.mtr == Decimal("15.00")
+        assert renglon.milim == 50
+        assert renglon.telas == 4
+
+    def test_cantidad_cero_no_devuelve_nada(self, db):
+        assert renglon_devolucion_parcial(self._original(), Decimal("0")) is None
+
+    def test_cantidad_negativa_no_devuelve_nada(self, db):
+        assert renglon_devolucion_parcial(self._original(), Decimal("-1")) is None
+
+    def test_cantidad_por_encima_de_lo_vendido_se_recorta(self, db):
+        """Nunca se puede devolver más de lo que efectivamente se vendió."""
+        renglon = renglon_devolucion_parcial(self._original(cant="10", impte="1000"), Decimal("50"))
+        assert renglon.cantidad_unidades == Decimal("10")
+        assert renglon.importe == Decimal("1000.00")
+
+    def test_sin_cant_original_es_todo_o_nada(self, db):
+        """Renglón de tela vendido por Mtr, sin Cant. real (CANT=0) — no
+        hay base para prorratear: cualquier valor positivo pide el
+        renglón COMPLETO (limitación conocida, ver docstring)."""
+        original = self._original(cant="0", mtr="30", impte="900")
+
+        renglon = renglon_devolucion_parcial(original, Decimal("1"))
+        assert renglon.importe == Decimal("900")
+        assert renglon.mtr == Decimal("30")
+        assert renglon.cantidad_unidades == Decimal("0")
+
+        assert renglon_devolucion_parcial(original, Decimal("0")) is None
+
+
+# ---------------------------------------------------------------------------
 # EmisionNotaCreditoMercaderiaService
 # ---------------------------------------------------------------------------
 
@@ -1751,6 +1860,105 @@ class TestEmisionNotaCreditoMercaderiaService:
                 cliente=cliente, letra="A", punto_venta=4, numero_comprobante=1,
                 renglones=[renglon], total=total, motivo=1, usuario="ana",
                 comprobante_a_imputar=None,
+            )
+
+
+# ---------------------------------------------------------------------------
+# EmisionNotaCreditoInternaService — Nota de Crédito Interna
+# (NCInterna.frm), cancela TODA la deuda pendiente de un Cliente.
+# ---------------------------------------------------------------------------
+
+
+class TestEmisionNotaCreditoInternaService:
+    def _cliente(self, db, corr1=0, deuda="0"):
+        cliente = Cliente(CODIGO=500, NOMB="Cliente NCI", CORR1=corr1, DEUDA=Decimal(deuda))
+        db.add(cliente)
+        db.add(Fctabla1(CTAB="MT   ", COD="5    ", DESCRI="ERROR DE FACTURACION"))
+        db.add(Parametro(CLAVE="1", NUME10=99))
+        db.commit()
+        return cliente
+
+    def _pendiente(self, db, clte=500, cpbte=1, tipo=1, debe="300"):
+        comprobante = Ctascte(
+            CLTE=clte, FECHA=date(2026, 1, 1), TIPO=tipo, PREFIJO=3, CPBTE=cpbte, LETRA="A",
+            IMPUT1="0 ", IMPUT2="0 ", IMPUT3="0 ", IMPUT4="0 ", IMPUT5="0 ", IMPUT6="0 ",
+            IMPTE=Decimal(debe), DEBE=Decimal(debe), FECVTO=date(2026, 1, 15),
+        )
+        db.add(comprobante)
+        db.commit()
+        return comprobante
+
+    def test_cancela_toda_la_deuda_de_una_vez(self, db):
+        cliente = self._cliente(db, corr1=3, deuda="800")
+        f1 = self._pendiente(db, cpbte=1, debe="500")
+        f2 = self._pendiente(db, cpbte=2, tipo=3, debe="300")
+
+        resultado = EmisionNotaCreditoInternaService(db).cancelar_deuda(
+            cliente=cliente, motivo=5, nota="Ajuste por error de facturación", usuario="ana",
+            fecha=date(2026, 2, 1),
+        )
+
+        assert resultado.total_cancelado == Decimal("800")
+        assert resultado.comprobantes_cancelados == 2
+        assert resultado.numero == 100  # NUME10 (99) + 1
+
+        db.refresh(f1)
+        db.refresh(f2)
+        assert f1.DEBE == Decimal("0")
+        assert f2.DEBE == Decimal("0")
+        assert f1.IMPUT1 == "4"  # corr = 3 + 1 (ClienteRepository.proximo_correlativo)
+        assert f2.IMPUT1 == "4"
+
+        cliente_db = db.query(Cliente).filter(Cliente.CODIGO == 500).one()
+        assert cliente_db.DEUDA == Decimal("0")
+        assert cliente_db.CORR1 == 4
+
+        parametro = db.query(Parametro).filter(Parametro.CLAVE == "1").one()
+        assert parametro.NUME10 == 100
+
+        nci = db.query(Ctascte).filter(Ctascte.id == resultado.ctascte_id).one()
+        assert nci.TIPO == 8
+        assert nci.LETRA == "X"
+        assert nci.DEBE == Decimal("800")
+        assert nci.IMPTE == Decimal("800")
+        assert nci.IMPUT1 == "4"  # se marca a sí misma, mismo patrón que Recibo/NC
+        assert nci.MOTI == "5"
+
+        # No es fiscal — no toca FcivaVta ni Totales (a diferencia de las
+        # otras 2 pantallas de NC).
+        assert db.query(FcivaVta).count() == 0
+        assert db.query(Totales).count() == 0
+
+        # Mejora deliberada sobre el legacy: deja auditoría en Imputacion
+        # (tipo "8") aunque el .frm original no lo hace — ver docstring.
+        imputaciones = db.query(Imputacion).all()
+        assert len(imputaciones) == 2
+        assert all(i.TIPO == "8" for i in imputaciones)
+
+    def test_sin_deuda_pendiente_rechaza(self, db):
+        cliente = self._cliente(db)
+
+        with pytest.raises(ValueError, match="deuda pendiente"):
+            EmisionNotaCreditoInternaService(db).cancelar_deuda(
+                cliente=cliente, motivo=5, nota="Nota de prueba larga", usuario="ana",
+            )
+
+    def test_sin_motivo_rechaza(self, db):
+        cliente = self._cliente(db)
+        self._pendiente(db)
+
+        with pytest.raises(ValueError, match="Motivo"):
+            EmisionNotaCreditoInternaService(db).cancelar_deuda(
+                cliente=cliente, motivo=None, nota="Nota de prueba larga", usuario="ana",
+            )
+
+    def test_nota_corta_rechaza(self, db):
+        cliente = self._cliente(db)
+        self._pendiente(db)
+
+        with pytest.raises(ValueError, match="7 caracteres"):
+            EmisionNotaCreditoInternaService(db).cancelar_deuda(
+                cliente=cliente, motivo=5, nota="corta", usuario="ana",
             )
 
 

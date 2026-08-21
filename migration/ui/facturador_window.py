@@ -64,8 +64,16 @@ from migration.afip import (
 from migration.db import get_session
 from migration.models import Cliente
 from migration.pdf import DatosFacturaPDF, generar_pdf_factura
+from migration.provincias import nombre_provincia
 from migration.repository import RepositoryFactory
-from migration.services import CuentaCorrienteService, EmisionFacturaService, FacturaService, RenglonEmision, TotalFactura
+from migration.services import (
+    CuentaCorrienteService,
+    EmisionFacturaService,
+    FacturaService,
+    RenglonEmision,
+    TotalFactura,
+    condicion_venta_texto,
+)
 
 from .cliente_busqueda_window import ClienteBusquedaWindow
 from .decimals import format_decimal
@@ -529,6 +537,35 @@ class FacturadorWindow(QMainWindow):
         QTimer.singleShot(0, self._on_elegir_cliente)
 
     # ------------------------------------------------------------------
+    def _datos_pdf(
+        self, letra, punto_venta, numero, fecha, total, descuentos_renglones,
+        *, cae=None, cae_vencimiento=None, qr_url=None, observaciones_afip="",
+    ) -> DatosFacturaPDF:
+        """Arma `DatosFacturaPDF` con los datos reales del Cliente que
+        faltaban (hallazgo real 2026-08-20, comparando contra una
+        Factura real de muestra: Localidad/CP/Provincia resuelta,
+        Condición de Venta) — reusado por el boceto y el PDF final."""
+        cliente = self.cliente_actual
+        return DatosFacturaPDF(
+            letra=letra, punto_venta=punto_venta, numero=numero, fecha=fecha,
+            cliente_codigo=cliente.CODIGO,
+            cliente_nombre=(cliente.NOMB or "").strip(),
+            cliente_cuit=cliente.CUIT or "",
+            cliente_civa=cliente.CIVA or 0,
+            cliente_domicilio=(cliente.DIR or "").strip(),
+            cliente_localidad=(cliente.LOC or "").strip(),
+            cliente_cp=(cliente.CP or "").strip(),
+            cliente_provincia=nombre_provincia(cliente.PCIA),
+            condicion_venta=condicion_venta_texto(self.repos, cliente.CVTA),
+            renglones=list(self.renglones),
+            descuentos_renglones=descuentos_renglones,
+            total=total,
+            cae=cae, cae_vencimiento=cae_vencimiento, qr_url=qr_url,
+            observaciones_afip=observaciones_afip,
+            en_dolares=self.chk_en_dolares.isChecked(),
+        )
+
+    # ------------------------------------------------------------------
     # Emitir
     # ------------------------------------------------------------------
     def _on_emitir(self) -> None:
@@ -568,21 +605,7 @@ class FacturadorWindow(QMainWindow):
         descuentos_renglones = self._descuentos_por_renglon()
 
         try:
-            datos_borrador = DatosFacturaPDF(
-                letra=letra,
-                punto_venta=punto_venta,
-                numero=numero,
-                fecha=fecha,
-                cliente_codigo=self.cliente_actual.CODIGO,
-                cliente_nombre=(self.cliente_actual.NOMB or "").strip(),
-                cliente_cuit=self.cliente_actual.CUIT or "",
-                cliente_civa=self.cliente_actual.CIVA or 0,
-                cliente_domicilio=(self.cliente_actual.DIR or "").strip(),
-                renglones=list(self.renglones),
-                descuentos_renglones=descuentos_renglones,
-                total=total,
-                en_dolares=self.chk_en_dolares.isChecked(),
-            )
+            datos_borrador = self._datos_pdf(letra, punto_venta, numero, fecha, total, descuentos_renglones)
             ruta_borrador = generar_pdf_factura(datos_borrador)
         except Exception as exc:  # noqa: BLE001
             QMessageBox.critical(self, "Facturador", f"No se pudo generar el boceto del PDF:\n{exc}")
@@ -664,23 +687,10 @@ class FacturadorWindow(QMainWindow):
 
         ruta_pdf = None
         try:
-            datos_pdf = DatosFacturaPDF(
-                letra=letra,
-                punto_venta=punto_venta,
-                numero=numero,
-                fecha=fecha,
-                cliente_codigo=self.cliente_actual.CODIGO,
-                cliente_nombre=(self.cliente_actual.NOMB or "").strip(),
-                cliente_cuit=self.cliente_actual.CUIT or "",
-                cliente_civa=self.cliente_actual.CIVA or 0,
-                cliente_domicilio=(self.cliente_actual.DIR or "").strip(),
-                renglones=list(self.renglones),
-                descuentos_renglones=descuentos_renglones,
-                total=total,
-                cae=resultado_cae.cae,
-                cae_vencimiento=resultado_cae.vencimiento,
-                qr_url=qr_url,
-                en_dolares=self.chk_en_dolares.isChecked(),
+            datos_pdf = self._datos_pdf(
+                letra, punto_venta, numero, fecha, total, descuentos_renglones,
+                cae=resultado_cae.cae, cae_vencimiento=resultado_cae.vencimiento, qr_url=qr_url,
+                observaciones_afip=resultado_cae.motivo,
             )
             ruta_pdf = generar_pdf_factura(datos_pdf)
         except Exception as exc:  # noqa: BLE001 — la factura YA se emitió/grabó, esto no debe revertirla

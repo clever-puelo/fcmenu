@@ -85,6 +85,10 @@ GLIFOS: dict[str, tuple[str, str]] = {
     "ndebito": ("↪️", Verde.CLARO),
     "cotizacion_venta": ("📃", Verde.CLARO),
     "remito": ("🚛", Verde.CLARO),
+    # Nota de Crédito Interna (2026-08-20) — mismo glifo que "ncredito"/
+    # "ncredito_merc" (es la misma familia conceptual, Nota de Crédito),
+    # color distinto para diferenciarla de un vistazo en la barra.
+    "nci": ("↩️", Verde.MEDIO_CLARO),
 }
 
 _CACHE: dict[tuple[str, int], QIcon] = {}

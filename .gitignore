@@ -8,6 +8,15 @@ fcmenu.sqlite3
 *.ldb
 migration/pdf_output/
 
+# Datos reales exportados de fcmenu.mdb para cargar a Postgres (clientes,
+# facturas, deuda, CUITs reales de ALESTEL SRL y sus clientes) — mismo
+# criterio que *.mdb: es DATA, no código. Hallazgo real 2026-08-20: estos
+# CSV estaban trackeados desde el commit inicial pese a que el .gitignore
+# ya excluía *.mdb — mismos datos reales, sólo en otro formato. El repo
+# se puso privado como mitigación inmediata; esto evita que se repita
+# hacia adelante.
+migration/etl/data/*.csv
+
 # Certificados/claves reales de AFIP (ALESTEL.crt/.key, Homo.key,
 # empresa.crt/.csr) — NUNCA al repo, son credenciales reales de la
 # empresa, no artefactos de migración.

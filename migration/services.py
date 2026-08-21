@@ -205,6 +205,58 @@ class FacturaService:
 
 
 # ---------------------------------------------------------------------------
+# CotizacionVentaService — Cotización (CabFact.frm TipoFac=4), NO
+# confundir con `Cotizacion`/`CotizacionRepository` (tabla del dólar).
+# ---------------------------------------------------------------------------
+
+
+class CotizacionVentaService:
+    """Numeración de Cotización (comprobante sin CAE del Facturador,
+    `TipoFac=4`) — el resto del cálculo (totales, bonificaciones) reusa
+    `FacturaService` tal cual, es la misma fórmula.
+
+    Fuente confirmada en el legacy (`CabFact.frm` Sub `BuscaUltima`
+    Case 4, `EmiFact.frm` líneas 780-784): Cotización usa su PROPIA
+    secuencia (`Parametro.NUME4`, fila única CLAVE='1'), independiente de
+    `NUME1`/`NUME5` (Factura A/B) — nunca comparte numeración con Factura
+    ni con NC/ND.
+
+    **Diferencia deliberada con el legacy, a confirmar con el usuario**:
+    en `EmiFact.frm`, CUALQUIER clic en "Ver Cpbte." (no sólo la emisión
+    final) ya incrementa y graba `NUME4` — repetir la vista previa quema
+    números de cotización sin que se haya generado nada realmente nuevo.
+    Acá `confirmar_numero()` sólo se llama una vez, cuando el operador
+    efectivamente genera el PDF final (`CotizacionVentaWindow._on_generar`)
+    — se prioriza no quemar numeración por simples vistazos, comportamiento
+    distinto al legacy pero no una regla de negocio fiscal (Cotización no
+    es comprobante fiscal, no hay AFIP de por medio)."""
+
+    def __init__(self, db: Session):
+        self.db = db
+        self.repos = RepositoryFactory(db)
+
+    def proximo_numero(self) -> int:
+        """Sólo lectura — para mostrar "Próx. Nº" en la cabecera sin
+        consumir el número (a diferencia de `confirmar_numero`)."""
+        config = self.repos.parametro().get_config()
+        return (config.NUME4 if config and config.NUME4 is not None else 0) + 1
+
+    def confirmar_numero(self) -> int:
+        """Incrementa y persiste `Parametro.NUME4` — réplica de
+        `EmiFact.frm` líneas 780-784 (`NROFAC = RgTABL!nume4 + 1;
+        RgTABL!nume4 = NROFAC`). Se commitea sola (mismo criterio que el
+        `RgTABL.Update` inmediato del legacy, no espera una transacción
+        más grande — Cotización no persiste nada más en el sistema)."""
+        config = self.repos.parametro().get_config()
+        if config is None:
+            raise ValueError("Parametro (CLAVE='1') no está configurado — no se puede numerar la Cotización.")
+        numero = (config.NUME4 or 0) + 1
+        config.NUME4 = numero
+        self.db.commit()
+        return numero
+
+
+# ---------------------------------------------------------------------------
 # CuentaCorrienteService
 # ---------------------------------------------------------------------------
 
@@ -523,6 +575,16 @@ class CuentaCorrienteService:
     TIPO_IMPUTACION_RECIBO = "4"
     TIPO_IMPUTACION_DESCUENTO = "6"
     TIPO_IMPUTACION_NOTA_CREDITO = "2"
+    # "8" agregado para `EmisionNotaCreditoInternaService` — mismo
+    # literal que `Ctascte.TIPO=8` ("NCInt"), consistente con el patrón
+    # ya establecido ("4"/Recibo, "2"/NC, "6"/Descuento — el literal de
+    # `Imputacion.TIPO` calca el `Ctascte.TIPO` del comprobante que lo
+    # genera). El legacy (`NCInterna.frm Sub AGrabar`) NO deja registro
+    # en `Imputacion` — sólo pisa IMPUT1-6 y DEBE directo — se agrega
+    # acá como mejora deliberada (auditoría de un evento que cancela
+    # TODA la deuda de un cliente de una sola vez), sin cambiar ningún
+    # dato ya persistido por el legacy (mismo resultado en Ctasctes).
+    TIPO_IMPUTACION_NOTA_CREDITO_INTERNA = "8"
 
     def imputar_pago(
         self,
@@ -1744,6 +1806,22 @@ class EmisionFacturaService:
 # ---------------------------------------------------------------------------
 
 
+def condicion_venta_texto(repos: RepositoryFactory, cvta: Optional[int]) -> str:
+    """Texto real de la Condición de Venta de un cliente (`Fctabla1`
+    CTAB='CV', `DESCRI`) — réplica del campo "Condición de Venta" que
+    imprimen Factura/Nota de Crédito/Débito (`EmiFact.frm:1380-1381`,
+    hallazgo real 2026-08-20 comparando contra una Factura real de
+    muestra, ver `pdf.DatosFacturaPDF.condicion_venta`). Cadena vacía si
+    no hay Cond. de Venta configurada — el PDF simplemente no imprime
+    esa línea en ese caso."""
+    if cvta is None:
+        return ""
+    entrada = repos.fctablas().by_ctab_cod("CV", str(cvta))
+    if entrada is None or not entrada.DESCRI:
+        return ""
+    return entrada.DESCRI.strip()
+
+
 def _dias_vencimiento_cond_venta(repos: RepositoryFactory, cvta: Optional[int]) -> int:
     """Días de la Cond. de Venta de un cliente (`Fctabla1` CTAB='CV',
     `NUMSD3`) — réplica de `EmiFact.frm Graba()` líneas 2274-2285. 30
@@ -2032,6 +2110,77 @@ class EmisionNotaCreditoService:
         return totales
 
 
+def renglon_devolucion_parcial(original: Fcestad1, cantidad_a_devolver: Decimal) -> Optional[RenglonEmision]:
+    """Arma el `RenglonEmision` de UN renglón de devolución, prorrateado
+    si `cantidad_a_devolver` es MENOR a lo efectivamente vendido en ese
+    renglón (`original.CANT`) — devolución PARCIAL (`Nota
+    CreditoMercaderiaWindow`, pedido del usuario 2026-08-19/20: "sacar
+    el checkbox todo-o-nada... el operador puede EDITARLA hacia abajo").
+
+    **Fórmula de prorrateo (lineal simple, confirmar con el usuario)**:
+    `ratio = cantidad_a_devolver / original.CANT` se aplica por igual a
+    TODOS los campos de cantidad/importe del renglón (`importe`, `pulg`,
+    `mtr`, `milim`, `telas`) — no sólo a `cantidad_unidades`. Es la
+    interpretación más simple y la única mencionada explícitamente por
+    el usuario al pedir la funcionalidad; no hay una segunda fórmula
+    real del legacy para contrastar (esta pantalla nunca existió con
+    devolución parcial en el VB6 — es funcionalidad nueva).
+
+    **Límite conocido**: si `original.CANT` es 0 o nulo (renglones cuya
+    cantidad real está en `MTR`, no en `CANT` — ej. tela vendida por
+    metro sin unidades), no hay una base sobre la que prorratear —
+    cualquier `cantidad_a_devolver` positiva devuelve el renglón
+    COMPLETO sin partir (mismo resultado que la versión anterior de
+    checkbox, que era todo-o-nada para TODOS los renglones); sólo un
+    `cantidad_a_devolver` de exactamente 0 excluye el renglón.
+
+    Devuelve `None` si `cantidad_a_devolver <= 0` (equivalente a "no se
+    tilda" en la versión anterior de checkbox). Recorta
+    `cantidad_a_devolver` a `original.CANT` si viene por encima (nunca
+    se puede devolver más de lo vendido) — no aplica cuando no hay
+    `CANT` real (caso todo-o-nada de arriba)."""
+    cantidad_a_devolver = Decimal(cantidad_a_devolver)
+    if cantidad_a_devolver <= 0:
+        return None
+
+    cantidad_original = original.CANT or Decimal("0")
+    cod1 = (original.COD1 or "").strip()
+    cod2 = (original.COD2 or "").strip()
+
+    if cantidad_original <= 0:
+        # Todo-o-nada: sin Cant. real, cualquier valor positivo pide el
+        # renglón completo — no hay base para prorratear.
+        return RenglonEmision(
+            cod1=cod1,
+            cod2=cod2,
+            descripcion="",  # el llamador ya resuelve la descripción real del Artículo
+            precio_unitario=original.PVTA or Decimal("0"),
+            importe=original.IMPTE or Decimal("0"),
+            pulg=original.PULG or Decimal("0"),
+            mtr=original.MTR or Decimal("0"),
+            milim=original.MILIM or 0,
+            telas=original.TELAS or 0,
+            cantidad_unidades=Decimal("0"),
+        )
+
+    if cantidad_a_devolver > cantidad_original:
+        cantidad_a_devolver = cantidad_original
+
+    ratio = cantidad_a_devolver / cantidad_original
+    return RenglonEmision(
+        cod1=cod1,
+        cod2=cod2,
+        descripcion="",  # el llamador ya resuelve la descripción real del Artículo
+        precio_unitario=original.PVTA or Decimal("0"),
+        importe=_round2((original.IMPTE or Decimal("0")) * ratio),
+        pulg=_round2((original.PULG or Decimal("0")) * ratio),
+        mtr=_round2((original.MTR or Decimal("0")) * ratio),
+        milim=round((original.MILIM or 0) * ratio),
+        telas=round((original.TELAS or 0) * ratio),
+        cantidad_unidades=cantidad_a_devolver,
+    )
+
+
 # ---------------------------------------------------------------------------
 # EmisionNotaCreditoMercaderiaService — Nota de Crédito por Devolución de
 # Mercadería (Motivo=1/"DEV.MERC.")
@@ -2293,6 +2442,172 @@ class EmisionNotaCreditoMercaderiaService:
         totales.FACTUAL = fecha
         totales.USUARIO = usuario6
         return totales
+
+
+# ---------------------------------------------------------------------------
+# EmisionNotaCreditoInternaService — Nota de Crédito Interna
+# (`NCInterna.frm`, 847 líneas, analizado íntegro 2026-08-20).
+# ---------------------------------------------------------------------------
+
+
+@dataclass
+class ResultadoEmisionNotaCreditoInterna:
+    ctascte_id: int
+    numero: int
+    total_cancelado: Decimal
+    comprobantes_cancelados: int
+
+
+class EmisionNotaCreditoInternaService:
+    """Cancela de una sola vez TODA la deuda pendiente (Facturas/ND con
+    `DEBE>0`) de un Cliente — réplica de `NCInterna.frm Sub AGrabar()`.
+
+    **Distinta de `EmisionNotaCreditoService`/`EmisionNotaCreditoMercaderiaService`**
+    (confirmado analizando el `.frm` completo, no asumido por el nombre
+    parecido): NO es un comprobante fiscal — Letra "X" fija, nunca pide
+    CAE, nunca pasa por AFIP, y ni siquiera graba en `FcivaVta`/`Totales`
+    (el legacy tampoco: `AGrabar()` sólo toca `Clientes`, `Parametro` y
+    `Ctasctes`). Es un ajuste puramente de cuenta corriente — "condona"
+    la deuda completa del cliente contra un único comprobante interno
+    nuevo (`Ctascte.TIPO=8`, "NCInt").
+
+    Mecanismo (líneas 502-660):
+    1. Todas las Facturas/ND impagas del cliente (`CuentaCorrienteService.
+       facturas_pendientes`, mismo filtro `TIPO in (1,3) AND DEBE>0` que
+       ya usa esa consulta) se marcan canceladas: primer slot IMPUT1-6
+       libre = correlativo nuevo del cliente, `DEBE=0` — sin importar
+       cuánto debían, se cancela el saldo completo de cada una (no hay
+       aplicación parcial, a diferencia de Recibo/NC).
+    2. Se inserta UN comprobante nuevo en `Ctasctes` (TIPO=8) por el
+       total de esa deuda, que se marca a sí mismo con el mismo
+       correlativo (mismo patrón de "doble marca" ya usado por
+       `EmisionReciboService`/`EmisionNotaCreditoService`).
+    3. `Clientes.DEUDA` se resetea a 0, `Clientes.CORR1` avanza.
+    4. Numeración propia (`Parametro.NUME10`), independiente de
+       Factura/NC/ND/Recibo/Cotización.
+
+    **Mejora deliberada sobre el legacy, a confirmar con el usuario**:
+    el paso 1 se reimplementa reusando `CuentaCorrienteService.
+    imputar_pago()` (con `importe_aplicado` = la deuda completa de cada
+    comprobante, que da el mismo resultado final en `Ctasctes` que el
+    loop manual del legacy) en vez de repetir ese loop a mano — de paso
+    deja un registro real en `Imputacion` (`tipo_imputacion="8"`) que el
+    legacy NO genera para este camino. No cambia ningún dato que el
+    legacy ya graba, sólo agrega trazabilidad para un evento que puede
+    condonar sumas grandes de una sola vez.
+
+    **Motivo obligatorio + Nota con mínimo de 7 caracteres**: réplica de
+    la única validación real que el legacy aplica antes de habilitar
+    "Grabar" (`Text1_Change`: `Len(Text1.Text) > 6`). El propio gateo del
+    botón en el legacy es frágil (`Combo5_Click` NO habilita "Grabar" —
+    sólo lo hace `Combo5_KeyPress`, escribiendo un dígito a mano; elegir
+    el Motivo con el mouse no alcanzaría) — acá se exige explícitamente
+    Motivo elegido Y Nota ≥7 caracteres antes de permitir cancelar,
+    interpretación más coherente del mismo requisito, no una regla de
+    negocio nueva (no cambia qué se persiste, sólo cuándo se habilita el
+    botón)."""
+
+    TIPO_NCI = 8
+    LETRA = "X"
+    PREFIJO = 1
+    LARGO_MINIMO_NOTA = 7  # NCInterna.frm Text1_Change: Len(Text1.Text) > 6
+
+    def __init__(self, db: Session):
+        self.db = db
+        self.repos = RepositoryFactory(db)
+        self.cuentas = CuentaCorrienteService(db)
+
+    def proximo_numero(self) -> int:
+        config = self.repos.parametro().get_config()
+        return (config.NUME10 if config and config.NUME10 is not None else 0) + 1
+
+    def deuda_pendiente(self, clte: int) -> list[Ctascte]:
+        """Facturas/ND impagas a cancelar — mismos datos que arma
+        `BuscaDeuda()` para la grilla del legacy."""
+        return self.cuentas.facturas_pendientes(clte)
+
+    def cancelar_deuda(
+        self,
+        cliente: Cliente,
+        motivo: int,
+        nota: str,
+        usuario: str,
+        fecha: Optional[date] = None,
+    ) -> ResultadoEmisionNotaCreditoInterna:
+        if len(nota or "") < self.LARGO_MINIMO_NOTA:
+            raise ValueError(f"La Nota debe tener al menos {self.LARGO_MINIMO_NOTA} caracteres.")
+        if motivo is None:
+            raise ValueError("Elegí un Motivo.")
+
+        pendientes = self.deuda_pendiente(cliente.CODIGO)
+        if not pendientes:
+            raise ValueError("El Cliente no tiene deuda pendiente para cancelar.")
+
+        config = self.repos.parametro().get_config()
+        if config is None:
+            raise ValueError("Parametro (CLAVE='1') no está configurado — no se puede numerar la Nota de Crédito Interna.")
+
+        fecha = fecha or date.today()
+        usuario6 = (usuario or "")[:6]
+        numero = (config.NUME10 or 0) + 1
+        saldo = sum((p.DEBE or Decimal("0") for p in pendientes), Decimal("0"))
+        corr = self.repos.cliente().proximo_correlativo(cliente)
+
+        try:
+            ctascte = Ctascte(
+                CLTE=cliente.CODIGO,
+                FECHA=fecha,
+                TIPO=self.TIPO_NCI,
+                PREFIJO=self.PREFIJO,
+                CPBTE=numero,
+                LETRA=self.LETRA,
+                # La propia fila se marca a sí misma con su correlativo
+                # (línea 636, `RgCCTE!imput1 = Corr`) — mismo patrón que
+                # EmisionReciboService/EmisionNotaCreditoService.
+                IMPUT1=str(corr), IMPUT2="0", IMPUT3="0", IMPUT4="0", IMPUT5="0", IMPUT6="0",
+                DEBE=saldo,
+                IMPTE=saldo,
+                CVTA="0",
+                BON=Decimal("0"),
+                TIPO9="0",
+                MOTI=str(motivo),
+                FECVTO=fecha,
+                USUAR=usuario6,
+            )
+            self.db.add(ctascte)
+            self.db.flush()
+
+            for pendiente in pendientes:
+                self.cuentas.imputar_pago(
+                    comprobante=pendiente,
+                    importe_aplicado=pendiente.DEBE or Decimal("0"),
+                    corr=corr,
+                    cpbte_recibo=numero,
+                    usuario=usuario6,
+                    clte=cliente.CODIGO,
+                    fecha=fecha,
+                    commit=False,
+                    tipo_imputacion=CuentaCorrienteService.TIPO_IMPUTACION_NOTA_CREDITO_INTERNA,
+                )
+
+            cliente.CORR1 = corr
+            cliente.DEUDA = Decimal("0")
+            cliente.USUARIO = usuario6
+            cliente.FACTUAL = fecha
+
+            config.NUME10 = numero
+
+            self.db.commit()
+        except Exception:
+            self.db.rollback()
+            raise
+
+        return ResultadoEmisionNotaCreditoInterna(
+            ctascte_id=ctascte.id,
+            numero=numero,
+            total_cancelado=saldo,
+            comprobantes_cancelados=len(pendientes),
+        )
 
 
 # ---------------------------------------------------------------------------

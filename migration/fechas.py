@@ -40,3 +40,23 @@ def formatear_fecha_corta(fecha: date) -> str:
     dia = _DIAS_ABREV_ES[fecha.weekday()]
     mes = _MESES_ABREV_ES[fecha.month - 1].capitalize()
     return f"{dia} {fecha.day:02d} {mes} {fecha.year}"
+
+
+def formatear_fecha_dd_mmm(fecha: date) -> str:
+    """"dd mmm yyyy" en minúsculas, sin día de semana (ej. "25 jun
+    2026") — réplica de `Format(fecha, "dd mmm yyyy")` bajo locale
+    es-AR, usado en las tablas de comprobantes cancelados/aplicados de
+    Recibo/Nota de Crédito Interna."""
+    return f"{fecha.day:02d} {_MESES_ABREV_ES[fecha.month - 1]} {fecha.year}"
+
+
+def formatear_fecha_impresion(fecha: date) -> str:
+    """"ddd dd MMM yyyy" TODO en minúsculas (ej. "jue 20 ago 2026") —
+    réplica exacta de `Format(Date, "ddd dd MMM yyyy")` (`EmiFact.frm`/
+    `EmiRec.frm`/`NCInterna.frm`, todos los comprobantes impresos) bajo
+    locale es-AR real: VB6 en ese locale imprime día/mes abreviados en
+    minúscula, sin punto. Distinta de `formatear_fecha_corta` (que
+    capitaliza, para la cabecera de la app) — acá se busca fidelidad
+    con el papel impreso real, no legibilidad de pantalla."""
+    dia = _DIAS_ES[fecha.weekday()][:3]
+    return f"{dia} {fecha.day:02d} {_MESES_ABREV_ES[fecha.month - 1]} {fecha.year}"

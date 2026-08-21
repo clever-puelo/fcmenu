@@ -9,18 +9,72 @@ sin depender de un generador de imágenes externo ni de una librería de
 QR aparte (CLAUDE.md: "Generación de PDF automáticos... mediante
 ReportLab").
 
-Layout de una sola página (hasta 25 renglones — mismo límite real que
-`DetFact.frm`, ver `factura_renglon.py`): encabezado (empresa/Factura/
-Letra/Número/Fecha), datos del cliente, tabla de renglones, totales, y
-el bloque de CAE + Vencimiento + QR que exige AFIP en todo comprobante
-electrónico.
+**Réplica visual del legacy (2026-08-20, 2 rondas)**: el usuario mandó
+una Factura y un Recibo REALES ("deben quedar iguales") — primera
+ronda: se releyó `EmiFact.frm`/`EmiRec.frm`/`NCInterna.frm` con esas
+muestras en mano. Segunda ronda (el resultado seguía sin coincidir): el
+usuario aclaró que el procedimiento real de impresión electrónica es
+`EmiFact.frm Sub IMPRIME_Electronica()` (línea 1250) — no `Sub IMPRIME()`
+(línea 700, código muerto/de impresión en papel, que es lo que se había
+leído primero por error — mismo nombre de variable `TIPO`/casi mismo
+código, fácil de confundir). Desde `IMPRIME_Electronica` se transcribieron
+las coordenadas ABSOLUTAS reales (mm desde el borde de la hoja, sistema
+propio de `Escribe(Font,Size,Negr,Ital,Lin,Col,Texto)` en `FCMENU.bas`) —
+ver docstring de `_dibujar_pagina_factura` para el detalle línea por
+línea. Lo mismo para Recibo (`EmiRec.frm Sub IMPRIME2en1`, confirmado
+por el usuario como el procedimiento real) y Nota de Crédito Interna
+(`NCInterna.frm Sub ImprimeNCI`, mismo letterhead).
+
+Hallazgos/correcciones reales de esta segunda ronda:
+- El logo real es `assets/LOGO2.jpg` (`Picture1` en los 3 `.frm`) — NO
+  `Logo-Alestel.png` (ése es el ícono de `MainMenuWindow`, con un
+  círculo de fondo, un logo distinto).
+- **30 renglones** deben entrar (no 25 — límite real de `DetFact.FG1`,
+  no del PDF) — la tabla arranca en Y=92mm y tiene que terminar antes
+  del subtotal crudo en Y≈231mm, ~4.6mm por renglón.
+- "Sin recuadros en detalle": la tabla de renglones no lleva grilla ni
+  caja (réplica de `TableBorder = tbNone` real) — sólo una línea bajo
+  el encabezado. Los recuadros de Totales (Subtotal/Descuento/Subtotal/
+  IVA/[Perc.IIBB]/TOTAL) SÍ son reales (`DibujaRect` literal en el
+  código) y se mantienen.
+- El pie (subtotal crudo/"Son pesos"/recuadros de Totales/CAE/QR) baja
+  a sus posiciones Y reales (231-284mm) en vez de quedar comprimido
+  arriba — eso es lo que de paso libera el espacio para los 30
+  renglones.
+- El Despacho SÍ se ve como columna aparte (visualmente — internamente
+  el legacy lo logra rellenando "Detalle" a ancho fijo en una fuente
+  monoespaciada y pegando el código atrás, no con una columna de tabla
+  real; acá se logra el mismo resultado visual dibujando el Despacho en
+  su propia posición X, más simple en ReportLab).
+- "Condición de Venta" es un campo real del cliente que faltaba.
+- Nota de Crédito imprime "Aplicada a: Factura Nº... del..." cuando
+  corresponde.
+- AFIP puede aprobar un CAE CON advertencias (`Observaciones`, ya
+  capturado en `ResultadoCAE.motivo` — `afip.py:554-557` — pero antes
+  sólo se usaba si el comprobante era RECHAZADO); el legacy la imprime
+  igual aunque haya CAE aprobado ("Se asignó CAE pero con advertencias").
+- Factura/NC/ND imprimen 2 páginas completas (ORIGINAL/DUPLICADO,
+  `EmiFact.frm` variable `Copias`); Recibo/Nota de Crédito Interna
+  imprimen 2 copias apiladas en UNA sola página A4 (técnica real
+  `MasLin`, `EmiRec.frm Sub IMPRIME2en1`/`NCInterna.frm Sub ImprimeNCI`).
+- Nombre de archivo real confirmado (`EmiFact.frm:1736`):
+  `TIPO & "-" & LaLetra & "-" & PtoVtaCpbte & "-" & NROFAC` — Factura
+  usa el título decorado con espacios (" F A C T U R A", línea 1280),
+  NC/ND usan el título plano ("NOTA DE CRÉDITO"/"NOTA DE DÉBITO").
+- Carpeta real de guardado (pedido del usuario, 2026-08-20):
+  `D:\\Comprobantes\\<año>\\<mes>\\<día>\\`, ahí van TODOS los tipos
+  (Factura real/provisoria, Recibo, Cotización, NC, etc.).
+
+Validado renderizando los PDF generados a imagen (`pymupdf`, sólo
+herramienta de QA local) contra datos reales de las muestras del
+usuario — no sólo por tests de contenido de texto.
 """
 
 from __future__ import annotations
 
 from dataclasses import dataclass, field
 from datetime import date
-from decimal import Decimal
+from decimal import ROUND_HALF_UP, Decimal
 from pathlib import Path
 from typing import Optional
 
@@ -30,25 +84,137 @@ from reportlab.graphics.shapes import Drawing
 from reportlab.lib import colors
 from reportlab.lib.pagesizes import A4, landscape
 from reportlab.lib.units import mm
+from reportlab.lib.utils import ImageReader
 from reportlab.pdfgen import canvas
 from reportlab.platypus import PageBreak, SimpleDocTemplate, Table, TableStyle
 
 from .decimals import format_decimal
-from .fechas import formatear_fecha_corta
+from .fechas import formatear_fecha_corta, formatear_fecha_dd_mmm, formatear_fecha_impresion
 from .repository import ETIQUETAS_TIPO_CTASCTE
 from .services import AplicacionPago, PagoCheque, PagoRetencion, RenglonEmision, TotalFactura
 
-# Réplica de CIVA_OPCIONES (`cliente_detalle_dialog.py`) — texto para
-# imprimir la Condición de IVA del receptor.
+# Texto corto de Condición de IVA para imprimir — mismas opciones que
+# `CIVA_OPCIONES` (`cliente_detalle_dialog.py`, `Combo1` del legacy en
+# CabFact/CabRec), sin la nota editorial de esa lista ("Inscripto", no
+# "IVA Responsable Inscripto" — el legacy antepone sólo "IVA " a mano).
 CONDICIONES_IVA = {
-    1: "IVA Responsable Inscripto",
-    2: "IVA Responsable No Inscripto",
-    3: "Consumidor Final",
-    4: "IVA Exento",
+    1: "Inscripto",
+    2: "Resp.No Insc.",
+    3: "Cons.Final",
+    4: "Exento",
     5: "Monotributo",
 }
 
 DIR_SALIDA_DEFAULT = Path("migration") / "pdf_output"
+# El logo REAL que usa el legacy en los 3 `.frm` de impresión (`Picture1`,
+# cargado desde `EmiFact.frx`/`EmiRec.frx`/`NCInterna.frx`, mismo tamaño
+# de control en los 3: 3405x1080 twips ≈ 60x19mm) es `assets/LOGO2.jpg`
+# — corregido 2026-08-20, `Logo-Alestel.png` es un logo distinto (con
+# ícono circular de fondo) que sólo usa `MainMenuWindow`, no la
+# impresión de comprobantes.
+LOGO_ALESTEL_PATH = Path(__file__).resolve().parent.parent / "assets" / "LOGO2.jpg"
+
+
+def _directorio_comprobantes(fecha: date) -> Path:
+    """Carpeta real donde se archivan los comprobantes emitidos (pedido
+    del usuario, 2026-08-20): `D:\\Comprobantes\\<año>\\<mes>\\<día>\\`,
+    organizados por la FECHA del comprobante — ahí van todos los tipos
+    (Factura real/provisoria, Recibo, Cotización, NC, etc., "etc.")."""
+    return Path("D:/Comprobantes") / f"{fecha.year:04d}" / f"{fecha.month:02d}" / f"{fecha.day:02d}"
+
+
+# ---------------------------------------------------------------------------
+# Monto en letras — réplica EXACTA de `FCMENU.bas Function MontoEscrito`
+# (línea 539), typos reales incluidos a propósito ("DIESISEIS" en vez de
+# "DIECISÉIS", etc.) — el pedido del usuario es que el PDF quede IGUAL
+# al legacy, no una versión corregida.
+# ---------------------------------------------------------------------------
+
+_UNIDADES = [
+    "UN", "DOS", "TRES", "CUATRO", "CINCO", "SEIS", "SIETE", "OCHO", "NUEVE", "DIEZ",
+    "ONCE", "DOCE", "TRECE", "CATORCE", "QUINCE", "DIESISEIS", "DIESISIETE", "DIESIOCHO",
+    "DIESINUEVE", "VEINTE", "VEINTIUN", "VEINTIDOS", "VEINTITRES", "VEINTICUATRO",
+    "VEINTICINCO", "VEINTISEIS", "VEINTISIETE", "VEINTIOCHO", "VEINTINUEVE",
+]
+_DECENAS = ["DIEZ", "VEINTE", "TREINTA", "CUARENTA", "CINCUENTA", "SESENTA", "SETENTA", "OCHENTA", "NOVENTA"]
+_CENTENAS = [
+    "CIENTO", "DOSCIENTOS", "TRESCIENTOS", "CUATROCIENTOS", "QUINIENTOS", "SEISCIENTOS",
+    "SETECIENTOS", "OCHOCIENTOS", "NOVECIENTOS",
+]
+
+
+def monto_en_palabras(valor: Decimal) -> str:
+    """Réplica de `MontoEscrito()` — "UN MILLON DOSCIENTOS TREINTA Y
+    CUATRO MIL con 56/100", sin el "PESOS"/paréntesis (esa parte del
+    legacy estaba comentada, ver línea 591 de `FCMENU.bas`; lo que
+    realmente se imprime es sólo esto con "Son pesos"/"Son Pesos:"
+    antepuesto por el llamador)."""
+    valor = Decimal(valor).quantize(Decimal("0.01"), rounding=ROUND_HALF_UP)
+    entero = int(valor)
+    centavos = int((valor - entero) * 100)
+
+    resultado = ""
+    cantidad = entero
+    numero_bloques = 1
+    while True:
+        primer_digito = segundo_digito = tercer_digito = 0
+        bloque = ""
+        bloque_cero = 0
+        for i in range(1, 4):
+            digito = cantidad % 10
+            if digito != 0:
+                if i == 1:
+                    bloque = " " + _UNIDADES[digito - 1]
+                    primer_digito = digito
+                elif i == 2:
+                    if digito <= 2:
+                        bloque = " " + _UNIDADES[digito * 10 + primer_digito - 1]
+                    else:
+                        bloque = " " + _DECENAS[digito - 1] + (" Y" if primer_digito != 0 else "") + bloque
+                    segundo_digito = digito
+                elif i == 3:
+                    centena = "CIEN" if (digito == 1 and primer_digito == 0 and segundo_digito == 0) else _CENTENAS[digito - 1]
+                    bloque = " " + centena + bloque
+                    tercer_digito = digito
+            else:
+                bloque_cero += 1
+            cantidad //= 10
+            if cantidad == 0:
+                break
+
+        if numero_bloques == 1:
+            resultado = bloque
+        elif numero_bloques == 2:
+            resultado = bloque + ("" if bloque_cero == 3 else " MIL") + resultado
+        elif numero_bloques == 3:
+            sufijo = " MILLON" if (primer_digito == 1 and segundo_digito == 0 and tercer_digito == 0) else " MILLONES"
+            resultado = bloque + sufijo + resultado
+        # Bloques 4+ (miles de millones): el legacy no los suma a ningún
+        # lado (el `Select Case` sólo tiene casos 1/2/3) — se replica tal
+        # cual, aunque sea un límite real del sistema original.
+
+        numero_bloques += 1
+        if cantidad == 0:
+            break
+
+    texto = resultado.strip() or "CERO"
+    return f"{texto} con {centavos:02d}/100"
+
+
+def _dibujar_logo(c: canvas.Canvas, x: float, y_top: float, ancho: float = 60 * mm) -> float:
+    """Dibuja el logo real (`assets/LOGO2.jpg`, el que usa el legacy en
+    la impresión — ver `LOGO_ALESTEL_PATH`). `ancho` default 60mm
+    replica el tamaño real del control `Picture1` en los 3 `.frm`
+    (3405 twips ≈ 60mm). Devuelve el alto real dibujado (para acomodar
+    el texto de al lado). Si el archivo no está (ej. checkout parcial),
+    no rompe — sigue sin logo."""
+    if not LOGO_ALESTEL_PATH.exists():
+        return 0
+    lector = ImageReader(str(LOGO_ALESTEL_PATH))
+    ancho_nativo, alto_nativo = lector.getSize()
+    alto = ancho * (alto_nativo / ancho_nativo) if ancho_nativo else ancho * 0.3
+    c.drawImage(lector, x, y_top - alto, width=ancho, height=alto, mask="auto")
+    return alto
 
 
 @dataclass
@@ -87,142 +253,290 @@ class DatosFacturaPDF:
     empresa_nombre: str = "ALESTEL SRL"
     empresa_cuit: str = "33703467909"
     en_dolares: bool = False
+    # Cotización (`CabFact.frm TipoFac=4`) reusa este mismo layout — ver
+    # `CotizacionVentaService`/`CotizacionVentaWindow`. Letra "X" fija,
+    # jamás pide CAE (nunca `Graba()`), documento sin validez fiscal.
+    es_cotizacion: bool = False
+    # Título impreso en el encabezado y usado en el nombre de archivo —
+    # réplica real de `EmiFact.frm:1278-1285`: sólo Factura usa el
+    # título decorado con espacios (" F A C T U R A"); NC/ND usan texto
+    # plano ("NOTA DE CRÉDITO"/"NOTA DE DÉBITO").
+    titulo_comprobante: str = "F A C T U R A"
+    # -- Datos del cliente que faltaban (agregados 2026-08-20, hallazgo
+    # real comparando contra la Factura de muestra) --
+    cliente_localidad: str = ""
+    cliente_cp: str = ""
+    # Nombre YA RESUELTO de la Provincia (ej. "Bs. As.") — réplica de
+    # `EmiFact.frm:1371` (`PCIA(Asc(CltePCIA)-65)`, ver
+    # `provincias.nombre_provincia()`), el llamador ya lo resuelve.
+    cliente_provincia: str = ""
+    condicion_venta: str = ""
+    # Observaciones/advertencias de AFIP aunque el CAE haya sido
+    # APROBADO (`ResultadoCAE.motivo`, `afip.py:554-557` ya las
+    # captura pero antes sólo se mostraban en el rechazo) — réplica de
+    # `EmiFact.frm:1722-1725` ("Se asignó CAE pero con advertencias.
+    # Motivo: ...").
+    observaciones_afip: str = ""
+    # Sólo Nota de Crédito: a qué Factura se está aplicando —
+    # `(punto_venta, numero, fecha)` — réplica de `EmiFact.frm:1356-1362`
+    # ("Aplicada a: Factura Nº... del..."). `None` si no aplica (ND, o
+    # NC que no imprime esa leyenda).
+    aplicada_a: Optional[tuple[int, int, date]] = None
 
 
 def _nombre_archivo(datos: DatosFacturaPDF) -> str:
+    """Réplica real de `EmiFact.frm:1736`: `TIPO & "-" & LaLetra & "-"
+    & PtoVtaCpbte & "-" & NROFAC` — el número NO lleva ceros a la
+    izquierda en el nombre de archivo (a diferencia del texto impreso
+    adentro del PDF, que sí)."""
+    if datos.es_cotizacion:
+        return f"COTIZACIÓN-{datos.punto_venta:04d}-{datos.numero}.pdf"
     sufijo = "_BORRADOR" if datos.cae is None else ""
-    return f"Factura_{datos.letra}_{datos.punto_venta:04d}-{datos.numero:08d}{sufijo}.pdf"
+    return f"{datos.titulo_comprobante.strip()}-{datos.letra}-{datos.punto_venta:04d}-{datos.numero}{sufijo}.pdf"
 
 
 def generar_pdf_factura(datos: DatosFacturaPDF, directorio_salida: Optional[Path] = None) -> Path:
     """Genera el PDF y lo guarda en disco (`directorio_salida`, por
-    defecto `migration/pdf_output/`) — réplica de "Resguardo y Gestión"
-    del CLAUDE.md. Devuelve la ruta del archivo creado."""
-    directorio = Path(directorio_salida) if directorio_salida is not None else DIR_SALIDA_DEFAULT
+    defecto `D:\\Comprobantes\\<año>\\<mes>\\<día>\\`, ver
+    `_directorio_comprobantes` — pedido del usuario 2026-08-20) —
+    réplica de "Resguardo y Gestión" del CLAUDE.md. Devuelve la ruta del
+    archivo creado.
+
+    2 páginas completas ORIGINAL/DUPLICADO para un comprobante real
+    (réplica de `EmiFact.frm` variable `Copias`) — el boceto (sin CAE
+    todavía) y la Cotización quedan en 1 sola página (no tiene sentido
+    imprimir "duplicado" de algo que no se grabó/no es fiscal)."""
+    directorio = Path(directorio_salida) if directorio_salida is not None else _directorio_comprobantes(datos.fecha)
     directorio.mkdir(parents=True, exist_ok=True)
     ruta = directorio / _nombre_archivo(datos)
 
     c = canvas.Canvas(str(ruta), pagesize=A4)
     ancho, alto = A4
-    margen = 15 * mm
-    y = alto - margen
 
-    # --- Encabezado ---------------------------------------------------
-    c.setFont("Helvetica-Bold", 14)
-    c.drawString(margen, y, datos.empresa_nombre)
-    c.setFont("Helvetica", 9)
-    c.drawString(margen, y - 14, f"CUIT: {datos.empresa_cuit}")
+    es_boceto = datos.cae is None and not datos.es_cotizacion
+    copias = [None] if (es_boceto or datos.es_cotizacion) else ["O R I G I N A L", "D U P L I C A D O"]
+    for etiqueta_copia in copias:
+        _dibujar_pagina_factura(c, datos, ancho, alto, etiqueta_copia, es_boceto)
+        c.showPage()
+    c.save()
+    return ruta
 
-    letra_x = ancho / 2
-    c.setFont("Helvetica-Bold", 22)
-    c.rect(letra_x - 12, y - 24, 24, 24)
-    c.drawCentredString(letra_x, y - 18, datos.letra)
 
-    c.setFont("Helvetica-Bold", 13)
-    c.drawRightString(ancho - margen, y, f"FACTURA {datos.letra}")
-    c.setFont("Helvetica", 10)
-    c.drawRightString(ancho - margen, y - 14, f"Nº {datos.punto_venta:04d}-{datos.numero:08d}")
-    c.drawRightString(ancho - margen, y - 26, f"Fecha: {datos.fecha.strftime('%d/%m/%Y')}")
-    if datos.en_dolares:
-        c.drawRightString(ancho - margen, y - 38, "Comprobante en DÓLARES")
+def _dibujar_pagina_factura(
+    c: canvas.Canvas, datos: DatosFacturaPDF, ancho: float, alto: float,
+    etiqueta_copia: Optional[str], es_boceto: bool,
+) -> None:
+    """Coordenadas ABSOLUTAS (mm desde el borde superior/izquierdo de la
+    hoja), transcriptas literales de `EmiFact.frm Sub IMPRIME_Electronica`
+    (líneas 1310-1737, confirmado con el usuario 2026-08-20 que ÉSE es
+    el procedimiento real — no `Sub IMPRIME()`, que es código muerto/de
+    impresión en papel). `Escribe(Font, Size, Negr, Ital, Lin, Col,
+    Texto)` ancla cada texto en (Col, Lin) como esquina superior-
+    izquierda (no hay parámetro de alineación real en `Escribe` — todo
+    el sistema dibuja "en el cursor", como una máquina de escribir) —
+    acá se replica igual, `drawString` en vez de `drawRightString` salvo
+    donde el propio legacy alinea a la derecha adentro de una tabla real
+    (columnas numéricas de "Detalle" y los recuadros de Totales)."""
 
-    y -= 45
-    c.line(margen, y, ancho - margen, y)
+    def pos(lin_mm: float, col_mm: float) -> tuple[float, float]:
+        return col_mm * mm, alto - lin_mm * mm
 
-    # --- Cliente --------------------------------------------------------
-    y -= 16
+    def y_de(lin_mm: float) -> float:
+        return alto - lin_mm * mm
+
+    # Líneas/recuadros muy finos (pedido del usuario, 2026-08-20 — "muy
+    # finas", el 1pt default de ReportLab se veía grueso comparado con
+    # el original) — aplica a todo `line()`/`rect()` de acá en adelante.
+    c.setLineWidth(0.35)
+
+    # --- Logo + "S.R.L." (`DrawPicture Picture1, "10mm", "5mm"`) -----------
+    # `Picture1` mide 3405x1080 twips en el `.frm` (~60x19mm) pero
+    # `DrawPicture` sin ancho/alto explícitos dibuja al tamaño NATIVO del
+    # bitmap, no al del control — 60mm de ancho pisaba el resto del
+    # membrete (probado y descartado, 2026-08-20); 50mm deja lugar para
+    # que "S.R.L." no quede pegado.
+    _dibujar_logo(c, 10 * mm, y_de(5), ancho=50 * mm)
+    c.setFont("Helvetica-Bold", 20)
+    # Ajuste a ojo del usuario (2026-08-20, sobre la 1ª ronda): a la
+    # altura del logo (antes más arriba) y 5mm a la izquierda (antes
+    # X=70 real).
+    c.drawString(*pos(17, 65), "S.R.L.")
+
+    # --- Membrete (Arial 9/10/7 bold, X=18-20) -----------------------------
+    c.setFont("Helvetica-Bold", 9)
+    c.drawString(*pos(23, 20), "CINTAS Y CORREAS DE TRANSMISIÓN")
+    c.drawString(*pos(26.5, 20), "AUTOMOTORES - AGRÍCOLAS - INDUSTRIALES")
+    c.drawString(*pos(30, 20), "GOMAS - ARTÍCULOS - ACCESORIOS")
     c.setFont("Helvetica-Bold", 10)
-    c.drawString(margen, y, "Cliente")
-    y -= 13
-    c.setFont("Helvetica", 9)
-    c.drawString(margen, y, f"Código: {datos.cliente_codigo}  —  {datos.cliente_nombre}")
-    y -= 12
-    c.drawString(margen, y, f"CUIT: {datos.cliente_cuit or 's/d'}")
-    c.drawString(margen + 90 * mm, y, CONDICIONES_IVA.get(datos.cliente_civa, "—"))
-    if datos.cliente_domicilio:
-        y -= 12
-        c.drawString(margen, y, f"Domicilio: {datos.cliente_domicilio}")
+    c.drawString(*pos(35, 20), "Av. Crovara 2948 - (1766) La Tablada (BA)")
+    c.drawString(*pos(39, 18), "Tel/Fax (011) 4652-1040 / 2684 / 2689 / 3080")
+    c.setFont("Helvetica-Bold", 7)
+    c.drawString(*pos(41.5, 30), "email: correas@alestel.com.ar")
+    c.setFont("Helvetica", 11)
+    c.drawString(*pos(47, 18), "I.V.A. RESPONSABLE INSCRIPTO")
+    if etiqueta_copia:
+        c.setFont("Helvetica-Bold", 9)
+        c.drawString(*pos(45, 100), etiqueta_copia)
 
-    y -= 16
-    c.line(margen, y, ancho - margen, y)
+    # --- CUIT/IB/Partida/Imp.Internos/Fec.Inicio (Lucida→Courier, X=140) --
+    c.setFont("Courier", 8)
+    c.drawString(*pos(31, 140), f"CUIT: {datos.empresa_cuit[:2]}-{datos.empresa_cuit[2:10]}-{datos.empresa_cuit[10:]}")
+    c.drawString(*pos(34, 140), "IB Conv.Mult.: 901 33-70346790-9")
+    c.drawString(*pos(37, 140), "Partida Municipal: 1985")
+    c.drawString(*pos(40, 140), "Imp.Internos: No Responsable")
+    c.drawString(*pos(43, 140), "Fec.Inicio Act.: 01-09-1999")
 
-    # --- Tabla de renglones ---------------------------------------------
-    # Réplica fiel de `EmiFact.frm` (líneas 887-892, "Ttulo" de FG1 en el
-    # impreso): Cant. | Detalle | % Descuento | Precio Unit. | Importe —
-    # SIN columna de Código propia (el legacy nunca la imprime aparte,
-    # el Código sólo se usa en pantalla) y con el Despacho pegado al
-    # final del Detalle (líneas 1054-1061), no en columna aparte
-    # (pedido del usuario, 2026-08-19: "El detalle lleva el despacho").
-    # Encabezados alineados al mismo punto que sus valores (pedido del
-    # usuario: "acomodar columna de valores" — antes los títulos se
-    # dibujaban a la izquierda mientras los importes de abajo quedaban
-    # alineados a la derecha, un desfasaje visual real).
-    y -= 14
-    x_cant_d = margen + 20 * mm  # ancla derecha
-    x_detalle_i = margen + 22 * mm  # ancla izquierda
-    x_desc_d = margen + 126 * mm
-    x_precio_d = margen + 150 * mm
-    x_importe_d = margen + 180 * mm
+    # --- Letra (bajada 10mm + recuadro) + Código AFIP -----------------------
+    # Ajuste a ojo del usuario (2026-08-20): la Letra 10mm más abajo que
+    # la posición real, y ahora DENTRO de un recuadro (el original la
+    # tenía suelta en esta réplica; el legacy sí la encierra en su propio
+    # `DibujaRect`, ver docstring del módulo).
+    c.rect(99 * mm, y_de(28), 21 * mm, 15 * mm)
+    c.setFont("Helvetica-Bold", 30)
+    c.drawString(*pos(26, 104), datos.letra)
+    c.setFont("Helvetica", 7)
+    codigo_afip_doc = {"F A C T U R A": "01", "NOTA DE CRÉDITO": "03", "NOTA DE DÉBITO": "02"}.get(
+        datos.titulo_comprobante.strip(), "01" if datos.letra == "A" else "06"
+    )
+    c.drawString(*pos(16, 102), f"Código {codigo_afip_doc}")
 
-    c.setFont("Helvetica-Bold", 8)
-    c.drawRightString(x_cant_d, y, "Cant.")
-    c.drawString(x_detalle_i, y, "Detalle")
-    c.drawRightString(x_desc_d, y, "%Descuento")
-    c.drawRightString(x_precio_d, y, "Precio Unit.")
-    c.drawRightString(x_importe_d, y, "Importe")
-    y -= 4
-    c.line(margen, y, ancho - margen, y)
+    # --- Título + Número + Fecha ---------------------------------------
+    c.setFont("Helvetica-Bold", 20)
+    titulo = "COTIZACIÓN" if datos.es_cotizacion else datos.titulo_comprobante
+    # Ajuste a ojo del usuario: FACTURA 5mm más abajo y 5mm más a la
+    # derecha que la posición real (Y=5,X=130).
+    c.drawString(*pos(10, 135), titulo)
+    c.setFont("Helvetica-Bold", 14)
+    c.drawString(*pos(20, 140), f"{datos.punto_venta:04d}-{datos.numero:08d}")
+    c.setFont("Helvetica", 10)
+    c.drawString(*pos(27, 146), formatear_fecha_impresion(datos.fecha))
+    if datos.en_dolares:
+        c.drawString(*pos(31, 146), "Comprobante en DÓLARES")
 
+    # --- Cliente + Condición de Venta, en un recuadro de lado a lado ------
+    # Pedido del usuario, 2026-08-20 (2ª ronda de ajustes a ojo): antes
+    # suelto, ahora en un recuadro que va de margen a margen.
+    c.rect(7 * mm, y_de(78), (ancho - 14 * mm), (78 - 49) * mm)
+    c.setFont("Helvetica", 10)
+    c.drawString(*pos(53, 10), f"{datos.cliente_nombre}         ({datos.cliente_codigo})")
+    c.drawString(*pos(58, 10), datos.cliente_domicilio)
+    cp_loc_pcia = f"({datos.cliente_cp})  {datos.cliente_localidad}  {datos.cliente_provincia}".strip()
+    c.drawString(*pos(63, 10), cp_loc_pcia)
+    c.drawString(*pos(68, 10), f"IVA {CONDICIONES_IVA.get(datos.cliente_civa, '—')}     CUIT : {datos.cliente_cuit or 's/d'}")
+    if datos.condicion_venta:
+        c.drawString(*pos(73, 10), f"Condición de Venta : {datos.condicion_venta}")
+    if datos.aplicada_a:
+        # Sólo Nota de Crédito (`EmiFact.frm:1356-1362`), X=145-160.
+        ptovta_ap, numero_ap, fecha_ap = datos.aplicada_a
+        c.setFont("Helvetica-Bold", 10)
+        c.drawString(*pos(63, 160), "Aplicada a:")
+        c.drawString(*pos(68, 145), f"Factura Nº {ptovta_ap:04d}-{numero_ap:08d}")
+        c.drawString(*pos(73, 150), f"del {fecha_ap.strftime('%d/%m/%Y')}")
+
+    # --- Tabla de renglones: títulos en un recuadro de lado a lado --------
+    # Cant. | Detalle | Despacho | % Descuento | Precio Unit. | Importe.
+    # Pedido del usuario (2ª ronda): sacar la línea divisoria inferior y
+    # meter los títulos en un recuadro de margen a margen (mismo tamaño
+    # 10pt bold que usa el legacy — antes 8pt, por eso se veían corridos
+    # a la izquierda respecto de los valores de abajo). Los RENGLONES en
+    # sí siguen "sin recuadros" (pedido de la 1ª ronda) — el recuadro es
+    # sólo para la fila de títulos.
+    c.rect(7 * mm, y_de(86), (ancho - 14 * mm), (86 - 78) * mm)
+    c.setFont("Helvetica-Bold", 10)
+    c.drawString(*pos(83, 12), "Cant.")
+    c.drawString(*pos(83, 56), "Detalle")
+    c.drawString(*pos(83, 83), "Despacho")
+    c.drawString(*pos(83, 109), "%Descuento")
+    c.drawString(*pos(83, 145), "Precio Unit.")
+    c.drawString(*pos(83, 178), "Importe")
+
+    # 30 renglones reales (pedido del usuario — antes 25) tienen que
+    # entrar entre Y=92 (arranque real de la tabla) y Y≈231 (subtotal
+    # crudo) — 139mm de espacio ÷ 30 = ~4.6mm/renglón.
+    ALTO_RENGLON_MM = 4.6
     c.setFont("Helvetica", 8)
     descuentos_renglones = datos.descuentos_renglones or []
-    for indice, renglon in enumerate(datos.renglones):
-        y -= 12
-        if y < 70 * mm:  # deja lugar para totales + CAE/QR — 25 renglones reales entran cómodos
-            break
+    lin = 92.0
+    for indice, renglon in enumerate(datos.renglones[:30]):
         cantidad = renglon.cantidad_unidades if renglon.cantidad_unidades > 0 else renglon.mtr
-        detalle = renglon.descripcion.strip()
-        if renglon.nrodesp_elegido:
-            detalle = f"{detalle} — Desp. {renglon.nrodesp_elegido}"
         desc_texto = descuentos_renglones[indice] if indice < len(descuentos_renglones) else ""
 
-        c.drawRightString(x_cant_d, y, format_decimal(cantidad))
-        c.drawString(x_detalle_i, y, detalle[:46])
-        c.drawRightString(x_desc_d, y, desc_texto)
-        c.drawRightString(x_precio_d, y, format_decimal(renglon.precio_unitario))
-        c.drawRightString(x_importe_d, y, format_decimal(renglon.importe))
+        c.drawRightString(*pos(lin, 26), format_decimal(cantidad))
+        c.drawString(*pos(lin, 27), renglon.descripcion.strip()[:32])
+        if renglon.nrodesp_elegido:
+            c.drawString(*pos(lin, 83), renglon.nrodesp_elegido)
+        c.drawRightString(*pos(lin, 142), desc_texto)
+        c.drawRightString(*pos(lin, 165), format_decimal(renglon.precio_unitario))
+        c.drawRightString(*pos(lin, 198), format_decimal(renglon.importe))
+        lin += ALTO_RENGLON_MM
 
-    y -= 10
-    c.line(margen, y, ancho - margen, y)
+    # --- Subtotal crudo (sin etiqueta, réplica EmiFact.frm:1637, Y=231) ---
+    c.setFont("Helvetica-Bold", 9)
+    c.drawRightString(*pos(231, 198), format_decimal(datos.total.bruto))
 
-    # --- Totales ----------------------------------------------------------
-    y -= 16
-    c.setFont("Helvetica", 9)
+    # --- Son pesos... (réplica MontoEscrito, Y=236/240/244, X=30) ---------
+    c.setFont("Courier", 7)
+    prefijo_moneda = "Son dólares " if datos.en_dolares else "Son pesos "
+    texto_letras = prefijo_moneda + monto_en_palabras(datos.total.total)
+    for i, inicio in enumerate((0, 70, 140)):
+        c.drawString(*pos(236 + i * 4, 30), texto_letras[inicio : inicio + 70])
+
+    # --- Totales en recuadros (réplica EmiFact.frm:1619-1637, Y=255/260) --
+    # Negrita real por etiqueta (`Escribe` real: Subtotal/Descuento/IVA
+    # NO son negrita — sólo el 2º "Subtotal" [neto] y "TOTAL" sí,
+    # `EmiFact.frm:1630-1635`) — antes las 5 tenían el mismo estilo.
     etiquetas_totales = [
-        ("Subtotal", datos.total.bruto),
-        ("Descuento", datos.total.descuento),
-        ("Neto Gravado", datos.total.neto_gravado),
-        ("IVA Insc. 21%", datos.total.iva),
-        ("Percepción IIBB", datos.total.percepcion_iibb),
+        ("Subtotal", datos.total.bruto, False),
+        ("Descuento", datos.total.descuento, False),
+        ("Subtotal", datos.total.neto_gravado, True),
+        ("IVA Insc. 21%", datos.total.iva, False),
     ]
-    for etiqueta, valor in etiquetas_totales:
-        c.drawString(ancho - margen - 70 * mm, y, etiqueta)
-        c.drawRightString(ancho - margen, y, f"$ {format_decimal(valor)}")
-        y -= 12
+    if datos.total.percepcion_iibb > 0:
+        etiquetas_totales.append(("Perc. IIBB", datos.total.percepcion_iibb, False))
+    etiquetas_totales.append(("TOTAL", datos.total.total, True))
 
-    c.setFont("Helvetica-Bold", 12)
-    c.drawString(ancho - margen - 70 * mm, y, "TOTAL")
-    c.drawRightString(ancho - margen, y, f"$ {format_decimal(datos.total.total)}")
+    # Posiciones/anchos reales de las 6 cajas (`DibujaRect 260,7,268,37` /
+    # `260,39,268,68` / `260,70,268,100` / `260,102,268,132` /
+    # `260,134,268,164` [IIBB, condicional] / `260,166,268,202` [TOTAL,
+    # sombreado, más ancha]) — la etiqueta va ARRIBA de la caja (Y=255,
+    # afuera), el valor ADENTRO (Y≈265, una sola línea, caja de 8mm).
+    x_cajas = [7, 39, 70, 102, 166] if len(etiquetas_totales) == 5 else [7, 39, 70, 102, 134, 166]
+    y_caja_bottom = y_de(268)
+    alto_caja = 8 * mm
+    for (etiqueta, valor, negrita), x_mm in zip(etiquetas_totales, x_cajas):
+        es_total = etiqueta == "TOTAL"
+        ancho_caja_mm = 36 if es_total else 30
+        x0 = x_mm * mm
+        if es_total:
+            c.setFillColor(colors.HexColor("#e0e0e0"))
+        c.rect(x0, y_caja_bottom, ancho_caja_mm * mm, alto_caja, fill=1 if es_total else 0, stroke=1)
+        if es_total:
+            c.setFillColor(colors.black)
+        # Tamaño 10 real (`Escribe ...,10,...`) — antes 8, por eso los
+        # títulos se veían más chicos/corridos a la izquierda que los
+        # valores de abajo (2ª ronda de ajustes a ojo).
+        c.setFont("Helvetica-Bold" if negrita else "Helvetica", 10)
+        c.drawString(*pos(255, x_mm + 2), etiqueta)
+        c.setFont("Helvetica-Bold" if es_total else "Helvetica", 9)
+        c.drawRightString(*pos(266, x_mm + ancho_caja_mm - 2), format_decimal(valor))
 
-    # --- CAE + Vencimiento + QR (obligatorio AFIP) -------------------------
-    # Si todavía no hay CAE (boceto — pedido del usuario, 2026-08-18: se
-    # muestra ANTES de pedirle nada a AFIP, ver docstring de
-    # `DatosFacturaPDF`) no hay CAE/QR reales que dibujar: un sello
-    # "BORRADOR" en su lugar, nada de datos legales inventados.
-    pie_y = 30 * mm
-    c.setFont("Helvetica", 9)
-    if datos.cae is not None and datos.cae_vencimiento is not None and datos.qr_url is not None:
-        c.drawString(margen, pie_y + 14, f"CAE: {datos.cae}")
-        c.drawString(margen, pie_y, f"Vencimiento CAE: {datos.cae_vencimiento.strftime('%d/%m/%Y')}")
+    # --- CAE + Vencimiento + QR (Y=270/274/269, X=132/137/7) ---------------
+    c.setFont("Courier", 10)
+    if datos.es_cotizacion:
+        # Nunca lleva CAE/QR (TipoFac=4 jamás llama a ConectaAFIP/Graba
+        # en el legacy) ni el sello "BORRADOR" — no es un boceto de un
+        # comprobante fiscal pendiente, es un documento sin validez
+        # fiscal por diseño.
+        c.drawString(*pos(270, 40), "Documento sin validez fiscal — no es Factura.")
+        c.drawString(*pos(275, 40), "Precios sujetos a modificación sin previo aviso.")
+    elif datos.cae is not None and datos.cae_vencimiento is not None and datos.qr_url is not None:
+        c.drawString(*pos(274, 40), f"C.A.E.: {datos.cae}")
+        c.drawString(*pos(278, 40), f"Fec.Vto.: {datos.cae_vencimiento.strftime('%d/%m/%Y')}")
+        if datos.observaciones_afip:
+            # Réplica de EmiFact.frm:1722-1725 — AFIP puede aprobar CON
+            # advertencias, no sólo rechazar.
+            c.setFont("Helvetica", 7)
+            c.drawString(*pos(284, 40), f"Se asignó CAE pero con advertencias. Motivo: {datos.observaciones_afip}")
 
         qr_widget = qr.QrCodeWidget(datos.qr_url)
         bounds = qr_widget.getBounds()
@@ -231,14 +545,10 @@ def generar_pdf_factura(datos: DatosFacturaPDF, directorio_salida: Optional[Path
         tamano = 25 * mm
         dibujo = Drawing(tamano, tamano, transform=[tamano / ancho_qr, 0, 0, tamano / alto_qr, 0, 0])
         dibujo.add(qr_widget)
-        renderPDF.draw(dibujo, c, ancho - margen - tamano, pie_y - 5 * mm)
+        renderPDF.draw(dibujo, c, 7 * mm, y_de(269) - tamano)
     else:
-        c.drawString(margen, pie_y + 14, "CAE: (pendiente — todavía no se solicitó a AFIP)")
+        c.drawString(*pos(270, 40), "CAE: (pendiente — todavía no se solicitó a AFIP)")
         _dibujar_sello_borrador(c, ancho, alto)
-
-    c.showPage()
-    c.save()
-    return ruta
 
 
 def _dibujar_sello_borrador(c: canvas.Canvas, ancho: float, alto: float) -> None:
@@ -256,16 +566,20 @@ def _dibujar_sello_borrador(c: canvas.Canvas, ancho: float, alto: float) -> None
 
 # ---------------------------------------------------------------------------
 # PDF de Recibo — EmisionReciboService, sin CAE/QR (Recibo no es
-# comprobante fiscal electrónico, ver docstring de EmisionReciboService)
+# comprobante fiscal electrónico, ver docstring de EmisionReciboService).
+#
+# Réplica visual real (`EmiRec.frm Sub IMPRIME2en1`, 2026-08-20): 2
+# copias ORIGINAL/DUPLICADO apiladas en UNA sola hoja A4 (técnica
+# `MasLin`), no 2 páginas separadas ni media hoja — mismo "Documento no
+# válido como Factura" que usa `NCInterna.frm` (comparten letterhead,
+# ver `_dibujar_membrete_no_fiscal`).
 # ---------------------------------------------------------------------------
 
 
 @dataclass
 class DatosReciboPDF:
     """Todo lo que necesita el PDF del Recibo — ya resuelto por el
-    llamador (`ReciboWindow`), este módulo sólo dibuja. Mucho más simple
-    que `DatosFacturaPDF`: sin Letra/CAE/QR, y con el desglose de medios
-    de pago en vez de un detalle de renglones."""
+    llamador (`ReciboWindow`), este módulo sólo dibuja."""
 
     numero: int
     fecha: date
@@ -279,28 +593,83 @@ class DatosReciboPDF:
     cheques: list[PagoCheque]
     retenciones: list[PagoRetencion]
     total_pago: Decimal
+    cliente_domicilio: str = ""
+    cliente_cp: str = ""
+    cliente_localidad: str = ""
+    # Código de 1 letra CRUDO (no el nombre resuelto) — réplica fiel de
+    # `EmiRec.frm:571` (`ClteLoc & " " & CltePCIA`, sin resolver el
+    # array `PCIA()` como sí hace Factura) — mismo dato, 2 templates
+    # distintos con fidelidad distinta, no es un error acá.
+    cliente_provincia_codigo: str = ""
+    cliente_civa: int = 0
     empresa_nombre: str = "ALESTEL SRL"
     empresa_cuit: str = "33703467909"
 
 
-# Media hoja A4 (feedback del usuario, 2026-08-15: "el recibo impreso es
-# medio A4") — un Recibo es un documento corto (unos pocos renglones
-# aplicados + medios de pago), no tiene sentido imprimirlo en una hoja
-# A4 completa. El bug real que además hacía parecer el PDF "vacío" en
-# el medio (a full A4 o a media hoja): "Correlativo" se dibujaba en una
-# posición ABSOLUTA fija (`20mm` desde el borde inferior) en vez de
-# relativa a dónde terminó el contenido — con pocos renglones, dejaba un
-# hueco enorme entre el Total y el Correlativo. Corregido: todo el
-# layout es relativo, línea tras línea, sin posiciones absolutas.
-MEDIA_A4 = (A4[0], A4[1] / 2)
-
-
 def _nombre_archivo_recibo(datos: DatosReciboPDF) -> str:
-    return f"Recibo_{datos.numero:08d}.pdf"
+    """Réplica real: `Recibo-X-0001-{numero}.pdf` (mismo patrón
+    `TIPO-LETRA-PTOVTA-NUMERO`, Letra "X" fija — Recibo nunca es
+    fiscal, `LaLetra = "X"` en `EmiRec.frm`)."""
+    return f"Recibo-X-0001-{datos.numero}.pdf"
+
+
+def _dibujar_membrete_no_fiscal(
+    c: canvas.Canvas, ancho: float, alto: float, y_top_mm: float, letra: str, titulo: str, numero_texto: str, fecha: date,
+) -> None:
+    """Letterhead compartido por Recibo/Nota de Crédito Interna/
+    Cotización — réplica real (`EmiRec.frm`/`NCInterna.frm`, ambos
+    idénticos en esta parte): logo + "S.R.L." + recuadro con Letra +
+    "Documento no válido como Factura" + título+número + CUIT/IB/
+    Partida. Coordenadas en mm DESDE ARRIBA (`y_top_mm`, réplica del
+    sistema real `Escribe(Lin, Col)` del legacy, MasLin ya sumado por
+    el llamador para la 2ª copia)."""
+
+    # Coordenadas reales absolutas (mm desde el borde izq./superior de la
+    # página, réplica literal de `EmiRec.frm Sub IMPRIME2en1` — el
+    # sistema real `Escribe(Lin, Col)` ya mide así, sin un margen propio
+    # aparte, `IMPRE.VP1.MarginLeft = "1mm"`).
+    def pos(lin_mm: float, col_mm: float) -> tuple[float, float]:
+        return col_mm * mm, alto - (y_top_mm + lin_mm) * mm
+
+    def y_pt(lin_mm: float) -> float:
+        return alto - (y_top_mm + lin_mm) * mm
+
+    _dibujar_logo(c, 8 * mm, y_pt(0), ancho=26 * mm)
+    c.setFont("Helvetica-Bold", 13)
+    c.drawString(*pos(11, 40), "S.R.L.")
+
+    c.setFont("Helvetica-Bold", 18)
+    c.rect(98 * mm, y_pt(15), 15 * mm, 13 * mm)
+    c.drawCentredString(105.5 * mm, y_pt(12), letra)
+
+    # Tamaño de fuente adaptado al largo del título ("Recibo Oficial" vs
+    # "Nota de Crédito Interna", bastante más largo) — número SIEMPRE en
+    # su propia línea debajo (no al lado, que es lo que colisionaba con
+    # títulos largos).
+    tamano_titulo = 15 if len(titulo) <= 16 else 12
+    c.setFont("Helvetica-Bold", tamano_titulo)
+    c.drawString(*pos(11, 118), titulo)
+    c.setFont("Helvetica-Bold", 10)
+    c.drawString(*pos(19.5, 118), numero_texto)
+    c.setFont("Helvetica", 6.5)
+    c.drawString(*pos(19, 98), "Documento no")
+    c.drawString(*pos(22, 98), "válido como Factura")
+
+    c.setFont("Helvetica", 9)
+    c.drawRightString(ancho - 8 * mm, y_pt(5), f"Buenos Aires, {formatear_fecha_impresion(fecha)}")
+
+    c.setFont("Helvetica-Bold", 8)
+    c.drawString(*pos(23, 14), "Av. Crovara 2948 - (1766) La Tablada (BA)")
+    c.drawString(*pos(28, 14), "Tel. (011) 4652-1040 / 2684 / 2689 / 3080")
+
+    c.setFont("Helvetica", 7)
+    c.drawString(*pos(23, 120), "Imp.Int.: No Resp.   I.B.: 901 33-70346790-9")
+    c.drawString(*pos(28, 120), "Part.Munic.: 1985   CUIT: 33-70346790-9")
 
 
 def generar_pdf_recibo(datos: DatosReciboPDF, directorio_salida: Optional[Path] = None) -> Path:
-    """Genera el PDF del Recibo (media hoja A4) y lo guarda en disco.
+    """Genera el PDF del Recibo — 2 copias (Original/Duplicado)
+    apiladas en UNA hoja A4 (réplica real, ver docstring de arriba).
     Devuelve la ruta.
 
     **Orden Vista Previa → Grabar** (decisión del usuario, 2026-08-15):
@@ -308,126 +677,254 @@ def generar_pdf_recibo(datos: DatosReciboPDF, directorio_salida: Optional[Path] 
     emitir_recibo()` (para la vista previa) — el número que lleva el
     PDF es el que TENDRÍA el comprobante, no necesariamente uno ya
     persistido. Ver `ReciboWindow._on_emitir`."""
-    directorio = Path(directorio_salida) if directorio_salida is not None else DIR_SALIDA_DEFAULT
+    directorio = Path(directorio_salida) if directorio_salida is not None else _directorio_comprobantes(datos.fecha)
     directorio.mkdir(parents=True, exist_ok=True)
     ruta = directorio / _nombre_archivo_recibo(datos)
 
-    c = canvas.Canvas(str(ruta), pagesize=MEDIA_A4)
-    ancho, alto = MEDIA_A4
-    margen = 10 * mm
-    y = alto - margen
+    c = canvas.Canvas(str(ruta), pagesize=A4)
+    ancho, alto = A4
 
-    # --- Encabezado ---------------------------------------------------
-    c.setFont("Helvetica-Bold", 12)
-    c.drawString(margen, y, datos.empresa_nombre)
-    c.setFont("Helvetica", 8)
-    c.drawString(margen, y - 11, f"CUIT: {datos.empresa_cuit}")
-
-    c.setFont("Helvetica-Bold", 11)
-    c.drawRightString(ancho - margen, y, "RECIBO")
-    c.setFont("Helvetica", 9)
-    c.drawRightString(ancho - margen, y - 11, f"Nº {datos.numero:08d}")
-    c.drawRightString(ancho - margen, y - 21, f"Fecha: {datos.fecha.strftime('%d/%m/%Y')}")
-
-    y -= 30
-    c.line(margen, y, ancho - margen, y)
-
-    # --- Cliente --------------------------------------------------------
-    y -= 11
-    c.setFont("Helvetica-Bold", 9)
-    c.drawString(margen, y, "Recibí de")
-    y -= 10
-    c.setFont("Helvetica", 8)
-    c.drawString(margen, y, f"Código: {datos.cliente_codigo}  —  {datos.cliente_nombre}")
-    y -= 9
-    c.drawString(margen, y, f"CUIT: {datos.cliente_cuit or 's/d'}")
-
-    y -= 11
-    c.line(margen, y, ancho - margen, y)
-
-    # --- Aplicado a (comprobantes pagados) -------------------------------
-    y -= 10
-    c.setFont("Helvetica-Bold", 8)
-    c.drawString(margen, y, "Comprobante")
-    c.drawString(margen + 50 * mm, y, "Fecha")
-    c.drawRightString(margen + 125 * mm, y, "Aplicado")
-    c.drawRightString(margen + 160 * mm, y, "Descuento")
-    y -= 3
-    c.line(margen, y, ancho - margen, y)
-
-    # Reserva de espacio para lo que viene DESPUÉS de esta lista (medios
-    # de pago + total + correlativo) — con la página ya acotada a media
-    # A4, hay que dejar de agregar renglones antes de quedarse sin lugar
-    # real, no sólo antes del borde de la hoja.
-    lineas_pie_estimadas = 3 + len(datos.cheques) + len(datos.retenciones) + (1 if datos.importe_efectivo > 0 else 0)
-    limite_inferior = margen + lineas_pie_estimadas * 9.5 + 20
-
-    c.setFont("Helvetica", 7.5)
-    for aplicacion in datos.aplicaciones:
-        y -= 9.5
-        if y < limite_inferior:
-            break
-        comprobante = aplicacion.comprobante
-        etiqueta = ETIQUETAS_TIPO_CTASCTE.get(comprobante.TIPO, "—")
-        fecha_txt = comprobante.FECHA.strftime("%d/%m/%Y") if comprobante.FECHA else "—"
-        c.drawString(margen, y, f"{etiqueta} {comprobante.CPBTE}")
-        c.drawString(margen + 50 * mm, y, fecha_txt)
-        c.drawRightString(margen + 125 * mm, y, format_decimal(aplicacion.importe_aplicado))
-        c.drawRightString(margen + 160 * mm, y, format_decimal(aplicacion.descuento) if aplicacion.descuento else "")
-
-    if datos.anticipo > 0:
-        y -= 9.5
-        c.drawString(margen, y, "Pago a Cuenta (Anticipo)")
-        c.drawRightString(margen + 125 * mm, y, format_decimal(datos.anticipo))
-
-    y -= 8
-    c.line(margen, y, ancho - margen, y)
-
-    # --- Medios de pago ---------------------------------------------------
-    y -= 12
-    c.setFont("Helvetica-Bold", 9)
-    c.drawString(margen, y, "Medios de pago")
-    y -= 10
-    c.setFont("Helvetica", 8)
-    if datos.importe_efectivo > 0:
-        c.drawString(margen, y, "Efectivo")
-        c.drawRightString(ancho - margen, y, f"$ {format_decimal(datos.importe_efectivo)}")
-        y -= 9.5
-    for pago_cheque in datos.cheques:
-        c.drawString(
-            margen,
-            y,
-            f"Cheque Nº {pago_cheque.nro_cheque} — Bco. {pago_cheque.banco} "
-            f"— Vto. {pago_cheque.fecha_vencimiento.strftime('%d/%m/%Y')}",
-        )
-        c.drawRightString(ancho - margen, y, f"$ {format_decimal(pago_cheque.importe)}")
-        y -= 9.5
-    for retencion in datos.retenciones:
-        c.drawString(margen, y, retencion.concepto or f"Retención/Anticipo tipo {retencion.tipreg}")
-        c.drawRightString(ancho - margen, y, f"$ {format_decimal(retencion.importe)}")
-        y -= 9.5
-
-    y -= 4
-    c.line(margen, y, ancho - margen, y)
-
-    # --- Total + Correlativo ---------------------------------------------
-    # Ambos relativos a `y` (no a una posición absoluta desde el borde
-    # de la hoja) — ver comentario de MEDIA_A4 más arriba.
-    y -= 15
-    c.setFont("Helvetica-Bold", 12)
-    c.drawString(margen, y, "TOTAL RECIBIDO")
-    c.drawRightString(ancho - margen, y, f"$ {format_decimal(datos.total_pago)}")
-
-    y -= 12
-    c.setFont("Helvetica", 7)
-    c.drawString(margen, y, f"Correlativo: {datos.correlativo}")
-
+    for indice_copia, etiqueta in enumerate(("Original", "Duplicado")):
+        offset_mm = indice_copia * 145  # réplica real de MasLin=145
+        _dibujar_copia_recibo(c, datos, ancho, alto, offset_mm, etiqueta)
     c.showPage()
     c.save()
     return ruta
 
 
-# ---------------------------------------------------------------------
+def _dibujar_copia_recibo(
+    c: canvas.Canvas, datos: DatosReciboPDF, ancho: float, alto: float, offset_mm: float, etiqueta_copia: str
+) -> None:
+    def y_pt(lin_mm: float) -> float:
+        return alto - (offset_mm + lin_mm) * mm
+
+    c.setLineWidth(0.35)  # líneas/recuadros finos, pedido del usuario 2026-08-20
+    _dibujar_membrete_no_fiscal(
+        c, ancho, alto, offset_mm, "X", "Recibo Oficial", f"0001-{datos.numero:08d}", datos.fecha,
+    )
+
+    margen_x = 8 * mm
+    y = y_pt(32)
+    c.setFont("Helvetica-Bold", 9)
+    c.drawString(margen_x, y, f"Sr./es: ({datos.cliente_codigo}) {datos.cliente_nombre}")
+    c.setFont("Helvetica", 9)
+    y = y_pt(37)
+    c.drawString(margen_x, y, datos.cliente_domicilio)
+    y = y_pt(42)
+    c.drawString(margen_x, y, f"({datos.cliente_cp}) {datos.cliente_localidad} {datos.cliente_provincia_codigo}".strip())
+    c.setFont("Helvetica-Bold", 9)
+    c.drawString(
+        margen_x + 92 * mm, y,
+        f"IVA: {CONDICIONES_IVA.get(datos.cliente_civa, '—')}     CUIT : {datos.cliente_cuit or 's/d'}",
+    )
+
+    # --- Comprobantes Cancelados / Valores Recibidos (2 columnas) --------
+    y = y_pt(46)
+    c.setFont("Helvetica-Bold", 8)
+    c.drawString(margen_x, y, "Comprobantes Cancelados")
+    c.drawString(margen_x + 90 * mm, y, "Valores Recibidos")
+    y = y_pt(49)
+    c.setFont("Helvetica-Bold", 7)
+    c.drawString(margen_x, y, "Tipo")
+    c.drawString(margen_x + 15 * mm, y, "Nro.")
+    c.drawString(margen_x + 35 * mm, y, "Fecha")
+    c.drawRightString(margen_x + 88 * mm, y, "Importe")
+    c.drawString(margen_x + 90 * mm, y, "Nro./Tipo")
+    c.drawString(margen_x + 115 * mm, y, "Bco./Detalle")
+    c.drawString(margen_x + 145 * mm, y, "Fecha")
+    c.drawRightString(margen_x + 192 * mm, y, "Importe")
+
+    c.setFont("Helvetica", 7)
+    y_izq = y - 8
+    for aplicacion in datos.aplicaciones:
+        y_izq -= 8
+        if y_izq < y_pt(100):
+            break
+        comprobante = aplicacion.comprobante
+        etiqueta = ETIQUETAS_TIPO_CTASCTE.get(comprobante.TIPO, "—")
+        fecha_txt = formatear_fecha_dd_mmm(comprobante.FECHA) if comprobante.FECHA else "—"
+        c.drawString(margen_x, y_izq, etiqueta)
+        c.drawString(margen_x + 15 * mm, y_izq, str(comprobante.CPBTE))
+        c.drawString(margen_x + 35 * mm, y_izq, fecha_txt)
+        c.drawRightString(margen_x + 88 * mm, y_izq, format_decimal(aplicacion.importe_aplicado))
+    if datos.anticipo > 0:
+        y_izq -= 8
+        c.drawString(margen_x, y_izq, "Pago a Cuenta (Anticipo)")
+        c.drawRightString(margen_x + 88 * mm, y_izq, format_decimal(datos.anticipo))
+
+    y_der = y - 8
+    medios: list[tuple[str, str, Decimal]] = []
+    if datos.importe_efectivo > 0:
+        medios.append(("* Efectivo *", "", datos.importe_efectivo))
+    for pago_cheque in datos.cheques:
+        tipo_ch = "ECh" if pago_cheque.tipo_cheque == 1 else ""
+        medios.append((f"{tipo_ch} {pago_cheque.nro_cheque}".strip(), f"Bco. {pago_cheque.banco}", pago_cheque.importe))
+    for retencion in datos.retenciones:
+        medios.append((retencion.concepto or f"Tipo {retencion.tipreg}", "", retencion.importe))
+    for texto_izq, texto_medio, importe in medios:
+        y_der -= 8
+        if y_der < y_pt(100):
+            break
+        c.drawString(margen_x + 90 * mm, y_der, texto_izq)
+        c.drawString(margen_x + 115 * mm, y_der, texto_medio)
+        c.drawRightString(margen_x + 192 * mm, y_der, format_decimal(importe))
+
+    # --- Totales + firma ---------------------------------------------------
+    y = y_pt(101)
+    c.setFont("Helvetica", 8)
+    c.drawString(margen_x, y, f"Total Cancelado: {format_decimal(datos.total_pago)}")
+    total_valores = sum(
+        [datos.importe_efectivo] + [p.importe for p in datos.cheques] + [r.importe for r in datos.retenciones],
+        Decimal("0"),
+    )
+    c.drawString(margen_x + 90 * mm, y, f"Total Valores: {format_decimal(total_valores)}")
+
+    y = y_pt(107)
+    c.setFont("Helvetica-Bold", 10)
+    c.drawString(margen_x, y, f"Total: $ {format_decimal(datos.total_pago)}")
+    c.setFont("Helvetica", 8)
+    c.drawString(margen_x + 40 * mm, y, f"Son Pesos: {monto_en_palabras(datos.total_pago)}")
+
+    y = y_pt(120)
+    c.drawString(ancho - margen_x - 45 * mm, y, "___________________")
+    c.drawCentredString(ancho - margen_x - 22 * mm, y_pt(125), "Por Alestel SRL")
+
+    c.setFont("Helvetica", 7)
+    c.drawString(margen_x, y_pt(125), "Este pago no implica cancelación de intereses por pago de facturas fuera de término")
+
+    c.setFont("Helvetica-Bold", 8)
+    c.drawRightString(ancho - margen_x, y_pt(132), etiqueta_copia)
+
+    c.setFont("Helvetica", 6)
+    c.drawString(margen_x, y_pt(132), f"Correlativo: {datos.correlativo}")
+
+
+# ---------------------------------------------------------------------------
+# PDF de Nota de Crédito Interna (`NCInterna.frm`) — documento SIN
+# validez fiscal (Letra "X" fija, nunca pasa por AFIP, ver
+# `EmisionNotaCreditoInternaService`), cancela toda la deuda pendiente
+# de un Cliente de una sola vez. Mismo letterhead que Recibo (comparten
+# `.frm`s casi idénticos en esta parte) — 2 copias apiladas en 1 hoja.
+# ---------------------------------------------------------------------------
+
+
+@dataclass
+class DatosNotaCreditoInternaPDF:
+    numero: int
+    fecha: date
+    cliente_codigo: int
+    cliente_nombre: str
+    cliente_cuit: str
+    motivo_texto: str
+    nota: str
+    comprobantes_cancelados: list[AplicacionPago]
+    total_cancelado: Decimal
+    cliente_domicilio: str = ""
+    cliente_cp: str = ""
+    cliente_localidad: str = ""
+    cliente_provincia_codigo: str = ""
+    cliente_civa: int = 0
+    empresa_nombre: str = "ALESTEL SRL"
+    empresa_cuit: str = "33703467909"
+
+
+def _nombre_archivo_nci(datos: DatosNotaCreditoInternaPDF) -> str:
+    return f"NOTA DE CREDITO INTERNA-X-0001-{datos.numero}.pdf"
+
+
+def generar_pdf_nota_credito_interna(
+    datos: DatosNotaCreditoInternaPDF, directorio_salida: Optional[Path] = None
+) -> Path:
+    """Réplica de `NCInterna.frm Sub ImprimeNCI` — documento interno que
+    cancela deuda, sin CAE/QR (no es un comprobante fiscal). 2 copias
+    apiladas en 1 hoja A4, mismo letterhead que Recibo."""
+    directorio = Path(directorio_salida) if directorio_salida is not None else _directorio_comprobantes(datos.fecha)
+    directorio.mkdir(parents=True, exist_ok=True)
+    ruta = directorio / _nombre_archivo_nci(datos)
+
+    c = canvas.Canvas(str(ruta), pagesize=A4)
+    ancho, alto = A4
+
+    for indice_copia, etiqueta in enumerate(("Original", "Duplicado")):
+        offset_mm = indice_copia * 145
+        _dibujar_copia_nci(c, datos, ancho, alto, offset_mm, etiqueta)
+    c.showPage()
+    c.save()
+    return ruta
+
+
+def _dibujar_copia_nci(
+    c: canvas.Canvas, datos: DatosNotaCreditoInternaPDF, ancho: float, alto: float, offset_mm: float, etiqueta_copia: str
+) -> None:
+    def y_pt(lin_mm: float) -> float:
+        return alto - (offset_mm + lin_mm) * mm
+
+    c.setLineWidth(0.35)  # líneas/recuadros finos, pedido del usuario 2026-08-20
+    _dibujar_membrete_no_fiscal(
+        c, ancho, alto, offset_mm, "X", "Nota de Crédito Interna", f"0001-{datos.numero:06d}", datos.fecha,
+    )
+
+    margen_x = 8 * mm
+    c.setFont("Helvetica-Bold", 9)
+    c.drawString(margen_x, y_pt(32), f"Sr./es: ({datos.cliente_codigo}) {datos.cliente_nombre}")
+    c.setFont("Helvetica", 9)
+    c.drawString(margen_x, y_pt(37), datos.cliente_domicilio)
+    c.drawString(margen_x, y_pt(42), f"({datos.cliente_cp}) {datos.cliente_localidad} {datos.cliente_provincia_codigo}".strip())
+    c.setFont("Helvetica-Bold", 9)
+    c.drawString(
+        margen_x + 92 * mm, y_pt(42),
+        f"IVA: {CONDICIONES_IVA.get(datos.cliente_civa, '—')}     CUIT : {datos.cliente_cuit or 's/d'}",
+    )
+
+    y = y_pt(46)
+    c.setFont("Helvetica-Bold", 8)
+    c.drawString(margen_x, y, "Comprobantes Cancelados")
+    y -= 10
+    c.setFont("Helvetica-Bold", 7)
+    c.drawString(margen_x, y, "Tipo")
+    c.drawString(margen_x + 20 * mm, y, "Nro.")
+    c.drawString(margen_x + 45 * mm, y, "Fecha")
+    c.drawRightString(margen_x + 130 * mm, y, "Importe")
+    c.drawRightString(margen_x + 175 * mm, y, "Cancelado")
+
+    c.setFont("Helvetica", 7.5)
+    for aplicacion in datos.comprobantes_cancelados:
+        y -= 8
+        if y < y_pt(100):
+            break
+        comprobante = aplicacion.comprobante
+        etiqueta = ETIQUETAS_TIPO_CTASCTE.get(comprobante.TIPO, "—")
+        fecha_txt = formatear_fecha_dd_mmm(comprobante.FECHA) if comprobante.FECHA else "—"
+        c.drawString(margen_x, y, etiqueta)
+        c.drawString(margen_x + 20 * mm, y, str(comprobante.CPBTE))
+        c.drawString(margen_x + 45 * mm, y, fecha_txt)
+        c.drawRightString(margen_x + 130 * mm, y, format_decimal(comprobante.IMPTE or Decimal("0")))
+        c.drawRightString(margen_x + 175 * mm, y, format_decimal(aplicacion.importe_aplicado))
+
+    y = y_pt(101)
+    c.setFont("Helvetica-Bold", 10)
+    c.drawString(margen_x, y, f"Total: $ {format_decimal(datos.total_cancelado)}")
+    c.setFont("Helvetica", 8)
+    c.drawString(margen_x + 45 * mm, y, f"Son Pesos: {monto_en_palabras(datos.total_cancelado)}")
+
+    y = y_pt(112)
+    c.drawString(margen_x, y, f"Motivo de la Nota de Crédito Interna: {datos.motivo_texto}")
+    y -= 9
+    lineas_nota = [datos.nota[i : i + 90] for i in range(0, len(datos.nota), 90)] or [""]
+    for indice, linea in enumerate(lineas_nota):
+        prefijo = "Nota: " if indice == 0 else "      "
+        c.drawString(margen_x, y, f"{prefijo}{linea}")
+        y -= 9
+
+    y_firma = y_pt(120)
+    c.drawString(ancho - margen_x - 45 * mm, y_firma, "___________________")
+    c.drawCentredString(ancho - margen_x - 22 * mm, y_pt(125), "Confeccionó")
+
+    c.setFont("Helvetica-Bold", 8)
+    c.drawRightString(ancho - margen_x, y_pt(132), etiqueta_copia)
+
+
+# ---------------------------------------------------------------------------
 # Listados varios (migración de Listados.frm) — un único generador
 # genérico de tabla paginada, reusado por los ~13 reportes en vez de
 # repetir el dibujo manual con `canvas` de arriba: acá la mayoría de las
@@ -446,7 +943,7 @@ def generar_pdf_recibo(datos: DatosReciboPDF, directorio_salida: Optional[Path] 
 # `Table` por cada bloque de filas que entra en una página (separadas por
 # `PageBreak()`), y el encabezado/pie de página los dibuja `_NumberedCanvas`
 # directo con `canvas`, en cada hoja.
-# ---------------------------------------------------------------------
+# ---------------------------------------------------------------------------
 
 
 def generar_pdf_listado(
@@ -704,5 +1201,4 @@ def generar_pdf_listado(
         title=titulo,
     )
     doc.build(elementos, canvasmaker=_NumberedCanvas)
-    return ruta
     return ruta

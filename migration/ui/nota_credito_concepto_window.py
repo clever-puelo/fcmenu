@@ -32,11 +32,12 @@ pantalla.
    (`EmisionNotaCreditoService.emitir_concepto`). Si AFIP rechaza, NO se
    persiste nada.
 
-**Fuera de alcance de esta primera versión** (a diferencia de Factura/
-Recibo): sin vista previa en PDF antes de grabar — se confirma con un
-diálogo simple. Se puede agregar en una ronda posterior si hace falta,
-no bloquea el circuito de AFIP/Cta.Cte., que es lo que importa
-validar primero.
+**Vista previa en PDF** (agregada 2026-08-20, pedido del usuario —
+antes sólo confirmaba con un diálogo simple, sin boceto): mismo patrón
+Boceto→Grabar que `FacturadorWindow`, reusando el layout de
+`DatosFacturaPDF`/`generar_pdf_factura` — ver `_datos_pdf()` para el
+adaptador que convierte los hasta-3 conceptos de texto libre en
+renglones de esa misma tabla.
 """
 
 from __future__ import annotations
@@ -68,10 +69,13 @@ from migration.afip import (
     codigo_afip,
     condicion_iva_receptor,
     crear_afip_provider,
+    generar_qr_afip,
     punto_venta_por_tipo,
 )
 from migration.db import get_session
 from migration.models import Cliente, Ctascte
+from migration.pdf import DatosFacturaPDF, generar_pdf_factura
+from migration.provincias import nombre_provincia
 from migration.repository import ETIQUETAS_TIPO_CTASCTE, RepositoryFactory
 from migration.services import (
     ConceptoNotaCredito,
@@ -79,12 +83,16 @@ from migration.services import (
     EmisionNotaCreditoService,
     FacturaService,
     NotaCreditoConceptoService,
+    RenglonEmision,
+    TotalFactura,
+    condicion_venta_texto,
 )
 
 from .cliente_busqueda_window import ClienteBusquedaWindow
 from .comprobante_aplicar_dialog import ComprobanteAplicarDialog
 from .decimals import format_decimal
 from .nota_cliente_dialog import NotaClienteDialog
+from .pdf_preview_dialog import PdfPreviewDialog
 from .widgets import (
     MontoLineEdit,
     UpperCaseLineEdit,
@@ -504,6 +512,26 @@ class NotaCreditoConceptoWindow(QMainWindow):
             return
 
         etiqueta_tipo = "Nota de Crédito" if tipo == TIPO_NC else "Nota de Débito"
+
+        # Boceto → Grabar (mismo patrón que `FacturadorWindow._on_emitir`/
+        # `NotaCreditoMercaderiaWindow._on_emitir`, pedido del usuario
+        # 2026-08-20) — se muestra ANTES de pedir el CAE, sello
+        # "BORRADOR" (sin CAE/QR reales todavía).
+        try:
+            datos_borrador = self._datos_pdf(letra, punto_venta, numero, fecha, conceptos, total, etiqueta_tipo)
+            ruta_borrador = generar_pdf_factura(datos_borrador)
+        except Exception as exc:  # noqa: BLE001
+            QMessageBox.critical(self, "Nota de Crédito/Débito", f"No se pudo generar el boceto del PDF:\n{exc}")
+            return
+
+        vista_previa = PdfPreviewDialog(
+            ruta_borrador, titulo=f"Boceto — {etiqueta_tipo} {letra} (sin CAE todavía)",
+            mostrar_boton_grabar=True, parent=self,
+        )
+        vista_previa.exec()
+        if not vista_previa.grabar:
+            return
+
         respuesta = QMessageBox.question(
             self,
             "Nota de Crédito/Débito",
@@ -558,13 +586,78 @@ class NotaCreditoConceptoWindow(QMainWindow):
             )
             return
 
+        qr_url = generar_qr_afip(
+            cuit_emisor=CUIT_EMISOR_DEFAULT, punto_venta=punto_venta, tipo_cbte=tipo_cbte, nro_cbte=numero,
+            importe_total=total.total, tipo_doc_receptor=80, nro_doc_receptor=self.cliente_actual.CUIT,
+            cae=resultado_cae.cae, fecha_cbte=fecha,
+        )
+        ruta_pdf = None
+        try:
+            datos_pdf = self._datos_pdf(
+                letra, punto_venta, numero, fecha, conceptos, total, etiqueta_tipo,
+                cae=resultado_cae.cae, cae_vencimiento=resultado_cae.vencimiento, qr_url=qr_url,
+                observaciones_afip=resultado_cae.motivo,
+            )
+            ruta_pdf = generar_pdf_factura(datos_pdf)
+        except Exception as exc:  # noqa: BLE001 — YA se grabó, esto no debe revertirlo
+            QMessageBox.warning(self, "Nota de Crédito/Débito", f"Se emitió y grabó correctamente, pero el PDF falló:\n{exc}")
+
         QMessageBox.information(
             self,
             "Nota de Crédito/Débito",
             f"{etiqueta_tipo} {letra} {punto_venta:04d}-{numero:08d} emitida.\n"
             f"CAE: {resultado_cae.cae}\nVencimiento: {resultado_cae.vencimiento}\nTotal: $ {format_decimal(total.total)}",
         )
+        if ruta_pdf is not None:
+            PdfPreviewDialog(
+                ruta_pdf, titulo=f"{etiqueta_tipo} {letra} {punto_venta:04d}-{numero:08d} — CAE {resultado_cae.cae}",
+                parent=self,
+            ).exec()
         self._nueva()
+
+    def _datos_pdf(
+        self, letra, punto_venta, numero, fecha, conceptos, total, etiqueta_tipo,
+        *, cae=None, cae_vencimiento=None, qr_url=None, observaciones_afip="",
+    ) -> DatosFacturaPDF:
+        """Adapta "Concepto Libre" (hasta 3 líneas de texto + importe,
+        `TotalNotaCreditoConcepto`) al mismo layout de tabla ya
+        construido para Factura (`DatosFacturaPDF`/`generar_pdf_factura`,
+        pedido del usuario 2026-08-20) — cada concepto se convierte en
+        UN renglón (cantidad 1, "precio unitario" = el importe del
+        concepto) y el desglose se remapea a `TotalFactura` (misma
+        base/IVA/total, sin descuento — "Concepto Libre" no tiene
+        bonificación en cascada)."""
+        cliente = self.cliente_actual
+        comprobante = self._comprobante_seleccionado  # None para ND — no imputa nada, ver docstring del módulo
+        renglones = [
+            RenglonEmision(
+                cod1="", cod2="",
+                descripcion=f"{c.descripcion}{'' if c.con_iva else ' (SIN IVA)'}",
+                precio_unitario=c.importe, importe=c.importe, cantidad_unidades=Decimal("1"),
+            )
+            for c in conceptos
+        ]
+        total_factura = TotalFactura(
+            bruto=total.base_gravada + total.no_gravado, descuento=Decimal("0"),
+            neto_gravado=total.base_gravada, iva=total.iva, percepcion_iibb=Decimal("0"), total=total.total,
+        )
+        return DatosFacturaPDF(
+            letra=letra, punto_venta=punto_venta, numero=numero, fecha=fecha,
+            cliente_codigo=cliente.CODIGO,
+            cliente_nombre=(cliente.NOMB or "").strip(),
+            cliente_cuit=cliente.CUIT or "",
+            cliente_civa=cliente.CIVA or 0,
+            cliente_domicilio=(cliente.DIR or "").strip(),
+            cliente_localidad=(cliente.LOC or "").strip(),
+            cliente_cp=(cliente.CP or "").strip(),
+            cliente_provincia=nombre_provincia(cliente.PCIA),
+            condicion_venta=condicion_venta_texto(self.repos, cliente.CVTA),
+            renglones=renglones, total=total_factura,
+            cae=cae, cae_vencimiento=cae_vencimiento, qr_url=qr_url,
+            observaciones_afip=observaciones_afip,
+            titulo_comprobante=etiqueta_tipo.upper(),
+            aplicada_a=(comprobante.PREFIJO or 0, comprobante.CPBTE or 0, comprobante.FECHA) if comprobante else None,
+        )
 
     # ------------------------------------------------------------------
     def _hay_algo_cargado(self) -> bool:

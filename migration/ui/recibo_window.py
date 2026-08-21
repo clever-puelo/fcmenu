@@ -714,13 +714,19 @@ class ReciboWindow(QMainWindow):
         total_pago = importe_efectivo + sum((p.importe for p in self._pagos), Decimal("0"))
 
         try:
+            cliente = self.cliente_actual
             datos_pdf = DatosReciboPDF(
                 numero=numero,
                 fecha=date.today(),
                 correlativo=correlativo_preview,
-                cliente_codigo=self.cliente_actual.CODIGO,
-                cliente_nombre=(self.cliente_actual.NOMB or "").strip(),
-                cliente_cuit=self.cliente_actual.CUIT or "",
+                cliente_codigo=cliente.CODIGO,
+                cliente_nombre=(cliente.NOMB or "").strip(),
+                cliente_cuit=cliente.CUIT or "",
+                cliente_domicilio=(cliente.DIR or "").strip(),
+                cliente_cp=(cliente.CP or "").strip(),
+                cliente_localidad=(cliente.LOC or "").strip(),
+                cliente_provincia_codigo=(cliente.PCIA or "").strip(),
+                cliente_civa=cliente.CIVA or 0,
                 aplicaciones=aplicaciones,
                 anticipo=anticipo,
                 importe_efectivo=importe_efectivo,

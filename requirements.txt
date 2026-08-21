@@ -12,3 +12,9 @@ zeep>=4.2
 # PDF de Factura Electrónica (migration/pdf.py) — el QR se dibuja nativo
 # con reportlab.graphics.barcode.qr, no hace falta una librería de QR aparte.
 reportlab>=4.0
+# Migración Access -> PostgreSQL (migration/etl/load_mdb_to_postgres.py):
+# lectura directa del .mdb vía ODBC, sin CSV intermedio. Requiere el
+# driver "Microsoft Access Database Engine 2016 Redistributable" (misma
+# arquitectura, 32/64 bits, que este Python) instalado en la PC — ver
+# migration/etl/access_odbc.py. No lo usa la app en sí, sólo el migrador.
+pyodbc>=5.0
