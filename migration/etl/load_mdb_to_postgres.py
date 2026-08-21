@@ -85,25 +85,21 @@ def _cargar_tabla_desde_mdb(db: Session, conn, config: ConfigTabla, *, fecha_cor
     return total
 
 
-def main() -> None:
-    parser = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
-    parser.add_argument("--mdb", required=True, help=r"Ruta al fcmenu.mdb, ej. C:\FCMenu\fcmenu.mdb")
-    parser.add_argument("--modo", choices=["completo", "prueba"], default="completo")
-    parser.add_argument("--anios", type=int, default=ANIOS_PRUEBA_DEFAULT)
-    parser.add_argument("--tablas", nargs="+", default=None)
-    args = parser.parse_args()
-
-    fecha_corte = _fecha_corte(args.anios) if args.modo == "prueba" else None
+def cargar(mdb: str, modo: str = "completo", anios: int = ANIOS_PRUEBA_DEFAULT, tablas_pedidas: Optional[list] = None) -> list:
+    """Cuerpo real de `main()`, extraído para poder llamarse directo
+    desde Python (`migrar_completo.py`) — ver el mismo docstring en
+    `load_csv_to_postgres.cargar()`."""
+    fecha_corte = _fecha_corte(anios) if modo == "prueba" else None
 
     tablas = TABLAS
-    if args.tablas:
-        pedidas = set(args.tablas)
+    if tablas_pedidas:
+        pedidas = set(tablas_pedidas)
         tablas = [c for c in TABLAS if c.modelo.__tablename__ in pedidas]
 
-    print(f"Conectando a Access: {args.mdb}")
-    conn = conectar_mdb(args.mdb)
+    print(f"Conectando a Access: {mdb}")
+    conn = conectar_mdb(mdb)
     print(f"Conectando a Postgres: {engine.url}")
-    print(f"Modo: {args.modo}" + (f" (últimos {args.anios} años, desde {fecha_corte})" if fecha_corte else ""))
+    print(f"Modo: {modo}" + (f" (últimos {anios} años, desde {fecha_corte})" if fecha_corte else ""))
 
     db = SessionLocal()
     resumen = []
@@ -132,6 +128,17 @@ def main() -> None:
     for tabla, n in resumen:
         print(f"  {tabla}: {n}")
     print("Listo.")
+    return resumen
+
+
+def main() -> None:
+    parser = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
+    parser.add_argument("--mdb", required=True, help=r"Ruta al fcmenu.mdb, ej. C:\FCMenu\fcmenu.mdb")
+    parser.add_argument("--modo", choices=["completo", "prueba"], default="completo")
+    parser.add_argument("--anios", type=int, default=ANIOS_PRUEBA_DEFAULT)
+    parser.add_argument("--tablas", nargs="+", default=None)
+    args = parser.parse_args()
+    cargar(args.mdb, args.modo, args.anios, args.tablas)
 
 
 if __name__ == "__main__":

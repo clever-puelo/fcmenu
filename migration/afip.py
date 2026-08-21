@@ -325,9 +325,20 @@ class AfipWSFEv1Cliente(NumeracionYCAEProvider):
     # memoria y disparaba un login nuevo que AFIP rechazaba. Se cachea
     # en disco (por CUIT+entorno) para sobrevivir a reinicios.
     def _archivo_cache_ta(self) -> Path:
+        import sys
         from pathlib import Path
 
-        directorio = Path(__file__).resolve().parent.parent / ".afip_cache"
+        # Empaquetado como .exe (PyInstaller, ver `packaging/` — 2026-08-21):
+        # congelado, `__file__` apunta adentro de la carpeta temporal de
+        # extracción (`sys._MEIPASS`), que se borra al cerrar el programa
+        # — cachear el TA ahí sería inútil (se perdería en cada reinicio,
+        # exactamente el problema que este cache existe para evitar). Se
+        # usa la carpeta del propio .exe en su lugar, que sí persiste.
+        if getattr(sys, "frozen", False):
+            base = Path(sys.executable).resolve().parent
+        else:
+            base = Path(__file__).resolve().parent.parent
+        directorio = base / ".afip_cache"
         directorio.mkdir(exist_ok=True)
         entorno = "homo" if self.homologacion else "prod"
         return directorio / f"ta_{self.cuit_emisor}_{entorno}.json"

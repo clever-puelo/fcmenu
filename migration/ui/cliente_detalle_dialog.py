@@ -30,7 +30,10 @@ memoria de sesión `pyqt6_ui_progress.md`):
 from __future__ import annotations
 
 from typing import Callable, Optional
+from urllib.parse import quote
 
+from PyQt6.QtCore import QUrl
+from PyQt6.QtGui import QDesktopServices
 from PyQt6.QtWidgets import (
     QCheckBox,
     QComboBox,
@@ -53,6 +56,7 @@ from migration.services import ClienteService
 
 from .decimals import parse_decimal
 from .dtos_cliente_dialog import DtosClienteDialog
+from .iconos import icono
 from .nota_cliente_dialog import NotaClienteDialog
 from .validators import cuit_valido, email_valido
 from .widgets import EnterAsTabFilter, LowerCaseLineEdit, UpperCaseLineEdit
@@ -156,7 +160,21 @@ class ClienteDetalleDialog(QDialog):
 
         self.txt_dir = UpperCaseLineEdit()
         self.txt_dir.setMaxLength(50)
-        form.addRow("Dirección :", self.txt_dir)
+        # Achicado + botón "ver en el mapa" a la derecha (pedido del
+        # usuario, 2026-08-21) — abre Google Maps en el navegador con
+        # la Dirección + Localidad + Provincia ya cargadas, para no
+        # tener que buscarla a mano.
+        self.txt_dir.setMaximumWidth(260)
+        fila_dir = QHBoxLayout()
+        fila_dir.addWidget(self.txt_dir)
+        self.btn_mapa = QPushButton()
+        self.btn_mapa.setIcon(icono("mapa", 22))
+        self.btn_mapa.setToolTip("Ver la Dirección en Google Maps")
+        self.btn_mapa.setMaximumWidth(36)
+        self.btn_mapa.clicked.connect(self._abrir_mapa)
+        fila_dir.addWidget(self.btn_mapa)
+        fila_dir.addStretch()
+        form.addRow("Dirección :", fila_dir)
 
         self.txt_loc = UpperCaseLineEdit()
         self.txt_loc.setMaxLength(50)
@@ -406,6 +424,18 @@ class ClienteDetalleDialog(QDialog):
         # negocio, ej. "cliente moroso").
         if self.repos.notaclte().by_cliente(cliente.CODIGO) is not None:
             self._on_notas()
+
+    def _abrir_mapa(self) -> None:
+        partes = [self.txt_dir.text().strip(), self.txt_loc.text().strip()]
+        pcia = self.txt_pcia.text().strip()
+        if pcia:
+            partes.append(pcia)
+        direccion = ", ".join(p for p in partes if p)
+        if not direccion:
+            QMessageBox.information(self, "Mapa", "Cargá la Dirección primero.")
+            return
+        url = f"https://www.google.com/maps/search/?api=1&query={quote(direccion)}"
+        QDesktopServices.openUrl(QUrl(url))
 
     def _on_notas(self) -> None:
         if self.cliente_actual is None:

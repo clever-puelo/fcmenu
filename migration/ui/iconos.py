@@ -89,6 +89,11 @@ GLIFOS: dict[str, tuple[str, str]] = {
     # "ncredito_merc" (es la misma familia conceptual, Nota de Crédito),
     # color distinto para diferenciarla de un vistazo en la barra.
     "nci": ("↩️", Verde.MEDIO_CLARO),
+    # Botón "ver en el mapa" de Dirección (Clientes, 2026-08-21) — pin de
+    # ubicación, no el logo de Google Maps (evitar usar una marca ajena
+    # como ícono propio); abre la dirección en Google Maps en el
+    # navegador, ver `cliente_detalle_dialog.py`.
+    "mapa": ("📍", Verde.PASTEL),
 }
 
 _CACHE: dict[tuple[str, int], QIcon] = {}

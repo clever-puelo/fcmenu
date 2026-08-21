@@ -20,9 +20,9 @@ ventana individualmente, es una hoja de estilo Qt (QSS) global.
 
 from __future__ import annotations
 
-from PyQt6.QtCore import Qt
+from PyQt6.QtCore import Qt, QTimer
 from PyQt6.QtGui import QIcon, QPixmap
-from PyQt6.QtWidgets import QApplication, QComboBox
+from PyQt6.QtWidgets import QApplication, QComboBox, QLineEdit
 
 # Cantidad de renglones visibles en el desplegable de CUALQUIER combo de
 # la app antes de scrollear — pedido del usuario (2026-08-17): "el combo
@@ -48,6 +48,42 @@ def _instalar_limite_combos() -> None:
 
     QComboBox.__init__ = _init_con_limite
     QComboBox._fcmenu_limite_instalado = True
+
+
+def _instalar_seleccion_total_al_foco() -> None:
+    """Parchea `QLineEdit.focusInEvent` UNA vez por proceso para que
+    TODO campo de texto de la app, sin excepción, seleccione su
+    contenido completo al tomar el foco (Tab o clic de mouse) — pedido
+    del usuario (2026-08-21): "eso debería hacer siempre y en todos los
+    campos de todo el sistema", detectado de nuevo con el Teléfono
+    (contiene espacios — "011 4652-1040" — así que no tomaba el camino
+    de `_NumericLineEditBase`, sólo numérico, y quedaba afuera).
+
+    Antes esto sólo vivía en `_NumericLineEditBase.focusInEvent()`
+    (campos de importe/entero/alfanumérico) — mismo criterio ya
+    confirmado por el usuario el 2026-08-15 (ver docstring de esa
+    clase), ahora extendido a CUALQUIER `QLineEdit` de la app (nombre,
+    dirección, teléfono, email, búsquedas de texto libre, etc.), en vez
+    de tener que acordarse de heredar de una clase especial en cada
+    pantalla nueva. Las subclases que ya hacían `selectAll()` a mano
+    (`_NumericLineEditBase`, que sí llama a `super().focusInEvent()`)
+    quedan con un `selectAll()` de más, inofensivo — no hay ningún
+    `focusInEvent` en el resto del código que NO llame a `super()`."""
+    if getattr(QLineEdit, "_fcmenu_seleccion_instalada", False):
+        return  # ya parcheado (ej. tests que llaman aplicar_tema más de una vez)
+    focus_in_original = QLineEdit.focusInEvent
+
+    def _focus_in_con_seleccion(self, event):  # noqa: ANN001
+        focus_in_original(self, event)
+        # Diferido a la próxima vuelta del loop de eventos — mismo
+        # motivo ya documentado en `_NumericLineEditBase`: si el foco
+        # se ganó con un clic de mouse, el propio `mousePressEvent()`
+        # de Qt todavía está pendiente y deshace un `selectAll()` hecho
+        # acá mismo, síncrono.
+        QTimer.singleShot(0, self.selectAll)
+
+    QLineEdit.focusInEvent = _focus_in_con_seleccion
+    QLineEdit._fcmenu_seleccion_instalada = True
 
 
 class Verde:
@@ -236,6 +272,7 @@ def aplicar_tema(app: QApplication) -> None:
     app.setStyleSheet(hoja_de_estilo())
     app.setStyle("Fusion")
     _instalar_limite_combos()
+    _instalar_seleccion_total_al_foco()
 
 
 def icono_app() -> QIcon:

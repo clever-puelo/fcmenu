@@ -19,8 +19,7 @@ from migration.ui.factura_renglon import (
     SeccionInexistenteError,
     SeccionSinUnidadFacturacionError,
     armar_codigo_renglon,
-    calcular_precio_e_importe,
-    calcular_precio_preview,
+    calcular_importe,
     descripcion_con_segmentos,
     posiciones_activas_seccion,
     resolver_precio_articulo,
@@ -120,97 +119,37 @@ def test_armar_codigo_renglon_gpn_3mm_0t(db):
     assert cod2 == "0300"
 
 
-def test_calcular_precio_e_importe_un_solo_multiplicador(db):
-    """Sección "A": sólo ALF7 (Unidades) — Importe = Precio × Cantidad,
-    Precio Unitario final = el mismo Precio (único divisor = él mismo)."""
+def test_calcular_importe_un_solo_multiplicador(db):
+    """Sección "A": sólo ALF7 (Unidades) — Importe = Precio × Cantidad."""
     _cargar_secciones_y_unidades(db)
     fctablas = RepositoryFactory(db).fctablas()
     seccion = resolver_seccion_renglon(fctablas, "A")
 
-    precio_unitario, importe = calcular_precio_e_importe(
-        Decimal("10"), {7: Decimal("5")}, seccion
-    )
+    importe = calcular_importe(Decimal("10"), {7: Decimal("5")}, seccion)
 
     assert importe == Decimal("50")
-    assert precio_unitario == Decimal("10")
 
 
-def test_calcular_precio_e_importe_multiples_factores(db):
-    """GPN: Importe = Precio × Cantidad(KG) (único factor ALF4-7 presente
-    es ALF7 en este fixture) — Precio Unitario = Importe / Cantidad."""
+def test_calcular_importe_multiples_factores(db):
+    """"MUL": Precio Unitario tal cual (nunca se deriva, decisión del
+    usuario 2026-08-21) × TODAS las cantidades — Pulgadas(ALF4) Y
+    Kilos/facturación(ALF7), sin excluir esta última."""
     _cargar_secciones_y_unidades(db)
     fctablas = RepositoryFactory(db).fctablas()
-    seccion = resolver_seccion_renglon(fctablas, "GPN")
+    seccion = resolver_seccion_renglon(fctablas, "MUL")
 
-    precio_unitario, importe = calcular_precio_e_importe(
-        Decimal("100"), {7: Decimal("3")}, seccion
-    )
+    importe = calcular_importe(Decimal("100"), {4: Decimal("3"), 7: Decimal("5")}, seccion)
 
-    assert importe == Decimal("300")
-    assert precio_unitario == Decimal("100")
+    assert importe == Decimal("1500")  # 100 × 3 × 5 — Precio Unitario sigue siendo 100
 
 
-def test_calcular_precio_e_importe_cantidad_cero_levanta_error(db):
+def test_calcular_importe_cantidad_cero_levanta_error(db):
     _cargar_secciones_y_unidades(db)
     fctablas = RepositoryFactory(db).fctablas()
     seccion = resolver_seccion_renglon(fctablas, "A")
 
     with pytest.raises(ValueError):
-        calcular_precio_e_importe(Decimal("10"), {7: Decimal("0")}, seccion)
-
-
-# ---------------------------------------------------------------------------
-# calcular_precio_preview — precio "en construcción" mientras se tipea
-# (feedback del usuario, 2026-08-15: mostrar el precio unitario apenas se
-# resuelve el Artículo, y actualizarlo a medida que se completan los
-# segmentos de cálculo, sin esperar a que la fila esté completa)
-# ---------------------------------------------------------------------------
-
-
-def test_precio_preview_sin_cantidades_cargadas_es_el_precio_base(db):
-    _cargar_secciones_y_unidades(db)
-    fctablas = RepositoryFactory(db).fctablas()
-    seccion = resolver_seccion_renglon(fctablas, "MUL")
-
-    precio = calcular_precio_preview(Decimal("100"), {}, seccion)
-
-    assert precio == Decimal("100")
-
-
-def test_precio_preview_aplica_multiplicador_ya_tipeado(db):
-    """ALF4 (PULG) ya tipeado multiplica el precio; ALF7 (KG, la Unidad
-    de Facturación) NO participa del Precio Unitario — daría el Importe."""
-    _cargar_secciones_y_unidades(db)
-    fctablas = RepositoryFactory(db).fctablas()
-    seccion = resolver_seccion_renglon(fctablas, "MUL")
-
-    precio = calcular_precio_preview(Decimal("100"), {4: Decimal("3")}, seccion)
-
-    assert precio == Decimal("300")
-
-
-def test_precio_preview_ignora_la_cantidad_de_facturacion_aunque_este_cargada(db):
-    _cargar_secciones_y_unidades(db)
-    fctablas = RepositoryFactory(db).fctablas()
-    seccion = resolver_seccion_renglon(fctablas, "MUL")
-
-    precio = calcular_precio_preview(Decimal("100"), {4: Decimal("3"), 7: Decimal("5")}, seccion)
-
-    assert precio == Decimal("300")  # no 1500 — ALF7 no es un multiplicador de precio
-
-
-def test_precio_preview_coincide_con_el_precio_unitario_final(db):
-    """Una vez completos todos los segmentos, el preview debe coincidir
-    con el `precio_unitario` que calcula `calcular_precio_e_importe`."""
-    _cargar_secciones_y_unidades(db)
-    fctablas = RepositoryFactory(db).fctablas()
-    seccion = resolver_seccion_renglon(fctablas, "MUL")
-    valores = {4: Decimal("3"), 7: Decimal("5")}
-
-    preview = calcular_precio_preview(Decimal("100"), valores, seccion)
-    precio_unitario, _ = calcular_precio_e_importe(Decimal("100"), valores, seccion)
-
-    assert preview == precio_unitario
+        calcular_importe(Decimal("10"), {7: Decimal("0")}, seccion)
 
 
 def test_descripcion_con_segmentos_omite_valores_en_cero(db):

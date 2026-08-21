@@ -24,6 +24,7 @@ from __future__ import annotations
 
 from datetime import date
 
+from PyQt6.QtCore import Qt
 from PyQt6.QtWidgets import (
     QDateEdit,
     QFormLayout,
@@ -83,20 +84,32 @@ class CotizacionWindow(QMainWindow):
 
         grupo = QGroupBox("Cotización")
         form = QFormLayout(grupo)
-        self.txt_dolar = QLineEdit("0")
+        # Campos angostos y alineados a la derecha (pedido del usuario,
+        # 2026-08-21) — son 5 importes, no texto libre; el ancho completo
+        # del form quedaba desproporcionado y sin alinear con la
+        # convención numérica del resto de la app (ver `detalle_grid.py`
+        # `COLUMNAS_NUMERICAS`).
+        self.txt_dolar = self._campo_dolar()
         form.addRow("Dólar :", self.txt_dolar)
-        self.txt_dolar_a = QLineEdit("0")
+        self.txt_dolar_a = self._campo_dolar()
         form.addRow("Dólar 'A' :", self.txt_dolar_a)
-        self.txt_dolar_b = QLineEdit("0")
+        self.txt_dolar_b = self._campo_dolar()
         form.addRow("Dólar 'B' :", self.txt_dolar_b)
-        self.txt_dolar_c = QLineEdit("0")
+        self.txt_dolar_c = self._campo_dolar()
         form.addRow("Dólar 'C' :", self.txt_dolar_c)
-        self.txt_dolar_d = QLineEdit("0")
+        self.txt_dolar_d = self._campo_dolar()
         form.addRow("Dólar 'D' :", self.txt_dolar_d)
         layout.addWidget(grupo)
 
         layout.addStretch()
         layout.addLayout(self._armar_barra_botones())
+
+    @staticmethod
+    def _campo_dolar() -> QLineEdit:
+        campo = QLineEdit("0")
+        campo.setMaximumWidth(120)
+        campo.setAlignment(Qt.AlignmentFlag.AlignRight)
+        return campo
 
     def _armar_barra_botones(self) -> QHBoxLayout:
         fila = QHBoxLayout()
@@ -167,7 +180,10 @@ class CotizacionWindow(QMainWindow):
         self.repos.cotizacion().guardar(fecha, datos)
 
         QMessageBox.information(self, "Cotización del Dólar", "Cotización grabada correctamente.")
-        self.lbl_nuevo.setVisible(False)
+        # Pedido del usuario (2026-08-21): tras grabar, cerrar la
+        # ventana en vez de dejarla abierta — dispara `closeEvent`
+        # (cierra la sesión de BD) igual que el botón "Cerrar".
+        self.close()
 
     # ------------------------------------------------------------------
     def closeEvent(self, event) -> None:  # noqa: N802 (Qt override)

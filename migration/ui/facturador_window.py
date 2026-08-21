@@ -80,7 +80,7 @@ from .decimals import format_decimal
 from .detalle_grid import DetalleGrid
 from .nota_cliente_dialog import NotaClienteDialog
 from .pdf_preview_dialog import PdfPreviewDialog
-from .widgets import crear_recuadro_destacado, redimensionar_pct_pantalla, texto_contacto_cliente
+from .widgets import crear_recuadro_subtotal_total, redimensionar_pct_pantalla, texto_contacto_cliente
 
 # CUIT del emisor — hardcodeado también en el legacy (`ConectaAFIP()`,
 # `WSFE.Cuit = "33703467909"`, empresa "ALESTEL SRL" ya confirmada en la
@@ -94,6 +94,17 @@ CUIT_EMISOR_DEFAULT = "33703467909"
 # se graba tal cual en `FcivaVta.MOTI` (CabFact.frm:721,690-692).
 FORMAS_PEDIDO = ["1-Personal", "2-Telefónico", "3-Mail", "4-Fax", "5-Otro"]
 FORMA_PEDIDO_DEFAULT_INDEX = 1  # "2-Telefónico" (CabFact.frm Form_Load: Combo4.ListIndex = 1)
+
+
+# Override puntual (sólo estos 3 paneles, no el resto de la app — el
+# `QGroupBox` global de `theme.py` sigue igual en todas las demás
+# pantallas) del margen/padding de chrome del recuadro — pedido del
+# usuario (2026-08-21): "comprimir más la Cabecera, el pie, ajustando
+# los márgenes superiores e inferiores... para ganar espacio" en el
+# Detalle. Sólo pisa `margin-top`/`padding` (Qt cascada por propiedad:
+# lo que no se redefine acá sigue saliendo del QSS global — borde,
+# color de fondo, etc.).
+ESTILO_PANEL_COMPACTO = "QGroupBox { margin-top: 6px; padding: 4px 6px 3px 6px; }"
 
 
 def _formatear_porcentaje(valor: Decimal) -> str:
@@ -143,6 +154,14 @@ class FacturadorWindow(QMainWindow):
         central = QWidget()
         self.setCentralWidget(central)
         layout = QVBoxLayout(central)
+        # Apretado al máximo (pedido del usuario, 2026-08-21: "sigue con
+        # poco espacio el Detalle... deben ser 10 [renglones] aprox" —
+        # con 4 no alcanzaba ni para ver un pedido chico completo) — el
+        # margen/espaciado entre Cabecera/Detalle/Pie no aporta nada,
+        # todo el aire que se le saque acá es una fila más de la
+        # grilla.
+        layout.setContentsMargins(4, 4, 4, 4)
+        layout.setSpacing(3)
 
         layout.addWidget(self._armar_cabecera())
         layout.addWidget(self._armar_detalle(), stretch=1)
@@ -153,7 +172,18 @@ class FacturadorWindow(QMainWindow):
     # ------------------------------------------------------------------
     def _armar_cabecera(self) -> QGroupBox:
         grupo = QGroupBox("Cabecera — Factura")
+        grupo.setStyleSheet(ESTILO_PANEL_COMPACTO)
         layout = QVBoxLayout(grupo)
+        # Líneas más juntas (pedido del usuario, 2026-08-21: "apretar la
+        # cabecera para ganar renglones en el Detalle") — el espaciado
+        # default de Qt entre las 3 líneas (Cliente/Contacto/Vendedor)
+        # sumaba más aire del necesario; achicado sin sacar ninguna
+        # línea, sólo el aire entre ellas y el margen contra el borde
+        # del recuadro (el padding/margin-top del QGroupBox en sí sigue
+        # el mismo de siempre, ver `theme.py`, para no desalinear el
+        # resto de los paneles de la app).
+        layout.setSpacing(3)
+        layout.setContentsMargins(6, 4, 6, 4)
 
         # "Nueva" subido a esta fila (antes vivía abajo) y "Nota Clte."
         # corrido a su izquierda — quedan los dos juntos en la misma
@@ -227,7 +257,9 @@ class FacturadorWindow(QMainWindow):
     # ------------------------------------------------------------------
     def _armar_detalle(self) -> QGroupBox:
         grupo = QGroupBox("Detalle — Sección/**, código, cantidad (F2 = buscar Artículo, Supr = borrar renglón)")
+        grupo.setStyleSheet(ESTILO_PANEL_COMPACTO)
         layout = QVBoxLayout(grupo)
+        layout.setContentsMargins(4, 4, 4, 2)
 
         self.grid_detalle = DetalleGrid(
             self.repos,
@@ -252,29 +284,36 @@ class FacturadorWindow(QMainWindow):
         # segunda línea de alto al Detalle, que es donde el usuario
         # necesita ver más renglones a la vez).
         grupo = QGroupBox("Totales")
+        grupo.setStyleSheet(ESTILO_PANEL_COMPACTO)
         layout = QHBoxLayout(grupo)
+        layout.setContentsMargins(6, 2, 6, 2)
 
-        lbl_subtotal_titulo = QLabel("Subtotal:")
-        lbl_subtotal_titulo.setStyleSheet("font-weight: bold;")
-        self.lbl_subtotal = QLabel("$ 0,00")
-        self.lbl_subtotal.setStyleSheet("font-weight: bold;")
-        layout.addWidget(lbl_subtotal_titulo)
-        layout.addWidget(self.lbl_subtotal)
-        layout.addSpacing(16)
-
+        # Rediseño 2026-08-21 (pedido del usuario, con captura real): el
+        # TOTAL se veía CORTADO ("$ 1.000.89!") — la fila ya no tenía
+        # ancho disponible para Subtotal + Desc. + Neto + IVA + Perc.IIBB
+        # + el recuadro de TOTAL + los 2 botones, todo en una sola línea.
+        # Subtotal y Total ahora van juntos, APILADOS (uno arriba del
+        # otro, separados por una línea fina) en un único recuadro a la
+        # derecha, antes de los botones — sin agrandar el panel en alto
+        # (2 líneas chicas). El resto de los valores queda a la
+        # izquierda, distribuidos equidistantes (`addStretch()` entre
+        # cada par etiqueta/valor, no un `addSpacing()` fijo).
+        layout.addStretch()
         layout.addWidget(QLabel("Desc.:"))
         self.lbl_descuento = QLabel("$ 0,00")
         layout.addWidget(self.lbl_descuento)
 
+        layout.addStretch()
         layout.addWidget(QLabel("Neto Grav.:"))
         self.lbl_neto = QLabel("$ 0,00")
         layout.addWidget(self.lbl_neto)
 
+        layout.addStretch()
         layout.addWidget(QLabel("IVA Insc.:"))
         self.lbl_iva = QLabel("$ 0,00")
         layout.addWidget(self.lbl_iva)
-        layout.addSpacing(16)
 
+        layout.addStretch()
         layout.addWidget(QLabel("Perc. IIBB:"))
         self.txt_porcentaje_iibb = QLineEdit("0")
         self.txt_porcentaje_iibb.setMaximumWidth(40)
@@ -285,14 +324,9 @@ class FacturadorWindow(QMainWindow):
         layout.addWidget(self.lbl_percepcion_iibb)
         layout.addStretch()
 
-        # TOTAL centrado en la línea, dentro de un recuadro (feedback
-        # del usuario, 2026-08-18, tercera ronda: "El total colocarlo en
-        # la misma línea pero en el centro y dentro de un panel/
-        # recuadro") — el `addStretch()` de cada lado lo deja centrado
-        # entre Percepción IIBB (izquierda) y Emitir/Salir (derecha).
-        recuadro_total, self.lbl_total = crear_recuadro_destacado("TOTAL:")
-        layout.addWidget(recuadro_total)
-        layout.addStretch()
+        recuadro_totales, self.lbl_subtotal, self.lbl_total = crear_recuadro_subtotal_total()
+        layout.addWidget(recuadro_totales)
+        layout.addSpacing(16)
 
         self.btn_emitir = QPushButton("Emitir")
         self.btn_emitir.setStyleSheet("font-weight: bold; padding: 6px;")
@@ -340,7 +374,15 @@ class FacturadorWindow(QMainWindow):
             self.tiene_nota_cliente = False
             self.btn_nota_cliente.setStyleSheet("")
             self.btn_elegir_cliente.setText(self.TEXTO_BTN_ELEGIR_CLIENTE)
+            # Inhibido hasta elegir Cliente (pedido del usuario,
+            # 2026-08-21) — no tiene sentido cargar renglones sin saber
+            # a quién se le factura (precios/descuentos por Cliente,
+            # etc.), y evita dejar cargado un Detalle "huérfano" si el
+            # operador arranca a tipear antes de elegir Cliente.
+            self.grid_detalle.setEnabled(False)
             return
+
+        self.grid_detalle.setEnabled(True)
 
         # Aviso de Deuda (ConDeuda.frm, vía BusClte.frm Function
         # TieneDeuda()) — sólo acá, al elegir cliente para una Factura
@@ -429,8 +471,25 @@ class FacturadorWindow(QMainWindow):
     # Dólares / cotización
     # ------------------------------------------------------------------
     def _cotizacion_actual(self) -> Decimal:
-        if not self.chk_en_dolares.isChecked():
-            return Decimal("1")
+        """Cotización del dólar del día — réplica de `LaCotiz`
+        (`FCMENU.frm`), que se carga una sola vez al arrancar y se usa
+        SIEMPRE en la fórmula de `resolver_precio_articulo`, sin
+        importar si "En Dólares" está tildado.
+
+        **Bug real corregido acá (2026-08-21, reportado por el
+        usuario)**: esta función devolvía `Decimal("1")` (sin convertir)
+        cada vez que "En Dólares" estaba destildado — que es el estado
+        default de toda factura normal en pesos. Como la mayoría de las
+        Secciones tiene el artículo con precio en USD
+        (`seccion.precio_en_dolares`), eso hacía que
+        `resolver_precio_articulo` facturara el precio en dólares tal
+        cual, como si fuesen pesos — sin aplicar la cotización nunca.
+        El checkbox NO debe decidir si se busca la cotización: en
+        `DetFact.frm` (líneas 840-853) sólo decide si se multiplica o
+        se divide, la cotización se usa en los dos casos."""
+        hoy = self.repos.cotizacion().by_fecha(date.today())
+        if hoy is not None and hoy.DOLAR:
+            return Decimal(hoy.DOLAR)
         ultima = self.repos.cotizacion().ultima()
         return Decimal(ultima.DOLAR) if ultima is not None and ultima.DOLAR else Decimal("1")
 
@@ -563,6 +622,7 @@ class FacturadorWindow(QMainWindow):
             cae=cae, cae_vencimiento=cae_vencimiento, qr_url=qr_url,
             observaciones_afip=observaciones_afip,
             en_dolares=self.chk_en_dolares.isChecked(),
+            cotizacion=self._cotizacion_actual(),
         )
 
     # ------------------------------------------------------------------

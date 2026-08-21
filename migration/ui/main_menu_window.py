@@ -33,7 +33,7 @@ contrario que en la versión anterior de este archivo)."""
 
 from __future__ import annotations
 
-from datetime import datetime
+from datetime import date, datetime
 from pathlib import Path
 
 from PyQt6.QtCore import QSize, Qt, QTimer, QUrl
@@ -56,6 +56,7 @@ from PyQt6.QtWidgets import (
 
 from migration.afip import etiqueta_entorno_afip
 from migration.db import get_session
+from migration.decimals import format_decimal
 from migration.fechas import formatear_fecha_corta
 from migration.repository import RepositoryFactory
 
@@ -207,10 +208,15 @@ class MainMenuWindow(QMainWindow):
         # Subventanas abiertas por (sección, etiqueta) — evita disparar
         # el mismo módulo 2 veces (ver `_ejecutar_tarea`).
         self._ventanas_por_clave: dict[tuple[str, str], QMdiSubWindow] = {}
+        # Sólo se auto-abre la pantalla de Cotización una vez por sesión
+        # (si el operador la cierra sin grabar, no hay que perseguirlo
+        # con la ventana cada vez que se refresca el pie de página).
+        self._cotizacion_avisada = False
 
         self._construir_ui()
         self._ajustar_proporciones()
         self._seleccionar_seccion("A-B-M's")
+        self._actualizar_cotizacion()
 
         self._timer_reloj = QTimer(self)
         self._timer_reloj.timeout.connect(self._actualizar_fecha_hora)
@@ -620,6 +626,13 @@ class MainMenuWindow(QMainWindow):
         self.lbl_mensajes.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Preferred)
         fila.addWidget(self.lbl_mensajes, stretch=1)
 
+        # Réplica de `FCMENU.frm StatusBar1.Panels.item(3)` ("1 Dólar = $
+        # x,xx") — el mismo panel donde el legacy avisaba si la
+        # cotización del día ya estaba cargada (ver `_actualizar_cotizacion`).
+        self.lbl_cotizacion = QLabel()
+        self.lbl_cotizacion.setStyleSheet(f"color: {Verde.TEXTO_SUAVE}; font-weight: bold;")
+        fila.addWidget(self.lbl_cotizacion)
+
         self.lbl_internet = QLabel("Verificando conexión…")
         self.lbl_internet.setStyleSheet(f"color: {Verde.TEXTO_SUAVE}; font-weight: bold;")
         fila.addWidget(self.lbl_internet)
@@ -668,6 +681,34 @@ class MainMenuWindow(QMainWindow):
         colores = {"info": Verde.TEXTO, "ok": Verde.MEDIO_OSCURO, "error": Verde.ALERTA}
         self.lbl_mensajes.setStyleSheet(f"color: {colores.get(nivel, Verde.TEXTO)};")
         self.lbl_mensajes.setText(texto)
+
+    # ------------------------------------------------------------------
+    # Cotización del Dólar del día
+    # ------------------------------------------------------------------
+    def _actualizar_cotizacion(self) -> None:
+        """Réplica de `FCMENU.frm` líneas 767-781 (`Form_Load`): busca la
+        fila de `Cotizacion` de HOY y, si no existe, fuerza abrir la
+        pantalla de carga (`Cotizac.Show`, no-modal en el legacy — sigue
+        cargando el menú principal igual, sólo "nagea" al operador).
+
+        A diferencia del legacy (que dejaba `LaCotiz` en 0 hasta que se
+        grabara), acá el precio de los artículos en dólares sigue
+        usando la última cotización disponible mientras tanto
+        (`CotizacionRepository.ultima()`, ver `_cotizacion_actual()` de
+        Facturador/Cotización) — se evita facturar a $0 por descuido,
+        que es un riesgo real del legacy y no una regla de negocio que
+        haya que preservar."""
+        hoy = self.repos.cotizacion().by_fecha(date.today())
+        if hoy is not None and hoy.DOLAR:
+            self.lbl_cotizacion.setText(f"1 Dólar = $ {format_decimal(hoy.DOLAR)}")
+            self.lbl_cotizacion.setStyleSheet(f"color: {Verde.TEXTO_SUAVE}; font-weight: bold;")
+            return
+
+        self.lbl_cotizacion.setText("⚠ Cotización de HOY sin cargar")
+        self.lbl_cotizacion.setStyleSheet(f"color: {Verde.ALERTA}; font-weight: bold;")
+        if not self._cotizacion_avisada:
+            self._cotizacion_avisada = True
+            self._abrir_cotizacion()
 
     # ------------------------------------------------------------------
     # Estado de conexión a Internet
@@ -1123,7 +1164,12 @@ class MainMenuWindow(QMainWindow):
     def _abrir_cotizacion(self) -> None:
         from .cotizacion_window import CotizacionWindow
 
-        self._mostrar(CotizacionWindow())
+        ventana = CotizacionWindow()
+        # Al cerrarse (grabada o no) se refresca el panel del pie —
+        # matching FCMENU.frm, que mostraba "1 Dólar = ..." recién
+        # cuando la fila de hoy existía.
+        ventana.destroyed.connect(self._actualizar_cotizacion)
+        self._mostrar(ventana)
 
     def _abrir_parametros(self) -> None:
         from .parametros_window import ParametrosWindow

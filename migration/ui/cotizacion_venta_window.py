@@ -284,8 +284,13 @@ class CotizacionVentaWindow(QMainWindow):
     # Dólares / cotización de cambio
     # ------------------------------------------------------------------
     def _cotizacion_actual(self) -> Decimal:
-        if not self.chk_en_dolares.isChecked():
-            return Decimal("1")
+        """Ver el docstring homónimo en `facturador_window.py` — mismo
+        bug real corregido acá (2026-08-21): el checkbox "En Dólares" no
+        debe decidir si se busca la cotización, sólo si se multiplica o
+        se divide dentro de `resolver_precio_articulo`."""
+        hoy = self.repos.cotizacion().by_fecha(date.today())
+        if hoy is not None and hoy.DOLAR:
+            return Decimal(hoy.DOLAR)
         ultima = self.repos.cotizacion().ultima()
         return Decimal(ultima.DOLAR) if ultima is not None and ultima.DOLAR else Decimal("1")
 
@@ -408,6 +413,7 @@ class CotizacionVentaWindow(QMainWindow):
                 descuentos_renglones=descuentos_renglones,
                 total=total,
                 en_dolares=self.chk_en_dolares.isChecked(),
+                cotizacion=self._cotizacion_actual(),
                 es_cotizacion=True,
             )
             ruta_pdf = generar_pdf_factura(datos_pdf)

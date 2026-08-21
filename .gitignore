@@ -35,3 +35,9 @@ migration/etl/data/*.csv
 # AfipWSFEv1Cliente._archivo_cache_ta(). Contiene un token/sign reales
 # de sesión, no una credencial permanente, pero tampoco va al repo.
 .afip_cache/
+
+# Salida de PyInstaller (ver packaging/migrar_fcmenu.spec) — binarios
+# generados, no código; se reconstruyen con
+# `pyinstaller packaging/migrar_fcmenu.spec` (ver doc de la PC nueva).
+build/
+dist/

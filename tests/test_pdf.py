@@ -169,6 +169,26 @@ class TestGenerarPdfFactura:
         assert "10+5" in texto
         assert "%Descuento" in texto or "% Descuento" in texto.replace("\n", " ")
 
+    def test_en_dolares_incluye_la_leyenda_legal_y_la_cotizacion(self, tmp_path):
+        """Réplica de `EmiFact.frm:1085-1094` (`LeyenDol1..5` + "U$S"
+        sobre las cajas de Subtotal/Subtotal neto/TOTAL) — sólo cuando
+        `en_dolares=True` (pedido del usuario, 2026-08-21)."""
+        datos = _datos_factura(en_dolares=True, cotizacion=Decimal("1515.00"))
+        ruta = generar_pdf_factura(datos, directorio_salida=tmp_path)
+        texto = PdfReader(str(ruta)).pages[0].extract_text()
+
+        assert "LA PRESENTE FACTURA SE ABONARA EN DOLARES" in texto
+        assert "1.515,00" in texto
+        assert texto.count("U$S") >= 3
+
+    def test_sin_en_dolares_no_incluye_la_leyenda_legal(self, tmp_path):
+        datos = _datos_factura(en_dolares=False)
+        ruta = generar_pdf_factura(datos, directorio_salida=tmp_path)
+        texto = PdfReader(str(ruta)).pages[0].extract_text()
+
+        assert "LA PRESENTE FACTURA SE ABONARA EN DOLARES" not in texto
+        assert "U$S" not in texto
+
     def test_cotizacion_no_lleva_cae_ni_sello_borrador(self, tmp_path):
         """`es_cotizacion=True` (Cotización, `CabFact.frm TipoFac=4`,
         ver `CotizacionVentaService`) — nunca pide CAE, así que nunca

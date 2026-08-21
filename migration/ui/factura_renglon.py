@@ -261,74 +261,39 @@ def resolver_precio_articulo(
     return precio_lista * cotizacion if seccion_precio_en_dolares else precio_lista
 
 
-def calcular_precio_e_importe(
-    precio_base: Decimal,
+def calcular_importe(
+    precio_unitario: Decimal,
     valores_cantidad: dict[int, Decimal],
     seccion: SeccionRenglon,
-) -> tuple[Decimal, Decimal]:
-    """Réplica de `DetFact.frm FG1_AfterEdit` bloque `AlPrecio` (líneas
-    599-621):
+) -> Decimal:
+    """Importe = Precio Unitario × ALF4 × ALF5 × ALF6 × ALF7 (los que
+    existan) — a diferencia del mecanismo anterior (`calcular_precio_e_
+    importe()`/`calcular_precio_preview()`, réplica fiel de `DetFact.frm
+    FG1_AfterEdit` bloque `AlPrecio`, líneas 599-621, que excluía ALF7
+    del "Precio Unitario" mostrado y lo iba RE-DERIVANDO de
+    Importe/Cantidad a medida que se tipeaban los segmentos ALF4-6),
+    acá el "Precio Unitario" NUNCA se deriva ni se toca solo: es
+    siempre el precio de lista del Artículo o el que tipeó el operador
+    a mano — decisión del usuario (2026-08-21), reportado como bug real
+    ("en la PL, cuando carga las Pulgadas, [el Precio Unitario] se
+    actualiza — no lo debe hacer"). El Importe sale de multiplicar ESE
+    precio (`precio_unitario`, tal cual está en pantalla) por TODAS las
+    cantidades, sin excluir la Unidad de Facturación.
 
-        Importe = Precio × ALF4 × ALF5 × ALF6 × ALF7   (los que existan)
-        Precio Unitario = Importe / Cantidad(ALF7)
-
-    `precio_base` es el precio tipeado/traído del Artículo (columna 7
-    original, antes de los multiplicadores). `valores_cantidad` mapea
-    `alf_index -> valor tipeado` para cada segmento de
-    `seccion.segmentos_cantidad` (incluido ALF7, la cantidad real
-    vendida).
-
-    Devuelve `(precio_unitario, importe)`. Levanta `ValueError` si la
-    cantidad de la Unidad de Facturación es 0 (no se puede dividir,
-    tampoco tendría sentido facturar cantidad 0).
-    """
+    Levanta `ValueError` si la cantidad de la Unidad de Facturación es
+    0 (no tendría sentido facturar cantidad 0)."""
     segmento_facturacion = seccion.segmento_facturacion
     if segmento_facturacion is None:
         raise SeccionSinUnidadFacturacionError(seccion.cod_seccion)
-
-    importe = Decimal(precio_base)
-    for segmento in seccion.segmentos_cantidad:
-        valor = Decimal(valores_cantidad.get(segmento.alf_index, Decimal(0)))
-        importe *= valor
 
     cantidad_facturacion = Decimal(valores_cantidad.get(segmento_facturacion.alf_index, Decimal(0)))
     if cantidad_facturacion == 0:
         raise ValueError("La cantidad de la Unidad de Facturación no puede ser 0")
 
-    precio_unitario = importe / cantidad_facturacion
-    return precio_unitario, importe
-
-
-def calcular_precio_preview(
-    precio_base: Decimal,
-    valores_cantidad: dict[int, Decimal],
-    seccion: SeccionRenglon,
-) -> Decimal:
-    """Precio Unitario "en construcción" — a diferencia de
-    `calcular_precio_e_importe()` (que sólo calcula una vez que la
-    Unidad de Facturación, ALF7, está cargada y levanta error si falta),
-    esta función se usa para ir MOSTRANDO el precio a medida que el
-    operador completa los segmentos de cálculo (ALF4-6), sin esperar a
-    que la fila esté completa (feedback del usuario, 2026-08-15: "buscar
-    el precio unitario y mostrarlo" apenas se resuelve el código, y
-    "armar el nuevo precio" a medida que se cargan los segmentos de
-    cálculo).
-
-    Cada segmento de cantidad YA tipeado (valor > 0) multiplica al
-    precio; los que todavía están en blanco se tratan como neutros
-    (no alteran el precio todavía) en vez de anularlo a 0 — así el
-    precio se va "armando" en vivo. La Unidad de Facturación (ALF7) NO
-    participa: multiplicarla da el Importe, no el Precio Unitario (ver
-    `calcular_precio_e_importe`)."""
-    precio = Decimal(precio_base)
-    segmento_facturacion = seccion.segmento_facturacion
+    importe = Decimal(precio_unitario)
     for segmento in seccion.segmentos_cantidad:
-        if segmento_facturacion is not None and segmento.alf_index == segmento_facturacion.alf_index:
-            continue
-        valor = valores_cantidad.get(segmento.alf_index)
-        if valor:
-            precio *= Decimal(valor)
-    return precio
+        importe *= Decimal(valores_cantidad.get(segmento.alf_index, Decimal(0)))
+    return importe
 
 
 def descripcion_con_segmentos(seccion: SeccionRenglon, descripcion_base: str, valores_codigo: list[Decimal]) -> str:

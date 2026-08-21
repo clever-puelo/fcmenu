@@ -87,6 +87,7 @@ from PyQt6.QtWidgets import (
     QSpinBox,
     QTableWidget,
     QTableWidgetItem,
+    QVBoxLayout,
     QWidget,
 )
 
@@ -157,6 +158,56 @@ def crear_recuadro_destacado(etiqueta: str, texto_valor: str = "$ 0,00") -> tupl
     lbl_valor.setStyleSheet("font-weight: bold; font-size: 12pt; border: none;")
     fila.addWidget(lbl_valor)
     return frame, lbl_valor
+
+
+def crear_recuadro_subtotal_total() -> tuple[QFrame, QLabel, QLabel]:
+    """Recuadro con Subtotal y TOTAL apilados (una línea arriba de la
+    otra, separadas por una línea fina) en vez de uno al lado del otro
+    en la fila de Totales del Facturador — pedido del usuario
+    (2026-08-21): el importe de TOTAL se veía cortado ("trunca el
+    importe total") porque la fila de Totales ya no tenía ancho
+    disponible para el recuadro con `crear_recuadro_destacado` (que
+    pone etiqueta+valor en horizontal, mucho más ancho que alto) sumado
+    a Subtotal/Desc./Neto/IVA/Perc.IIBB/botones, todo en una sola línea.
+    Apilar Subtotal+Total ahorra ese ancho sin agrandar el panel de
+    Totales en alto (2 líneas chicas ≈ la altura que ya ocupaba 1 línea
+    en 12pt). Devuelve el frame y los 2 `QLabel` de valor (para
+    `setText` después)."""
+    frame = QFrame()
+    frame.setFrameShape(QFrame.Shape.Box)
+    frame.setStyleSheet("QFrame { border: 1px solid #888; border-radius: 6px; }")
+    columna = QVBoxLayout(frame)
+    columna.setContentsMargins(10, 3, 10, 3)
+    columna.setSpacing(1)
+
+    fila_subtotal = QHBoxLayout()
+    fila_subtotal.setSpacing(6)
+    lbl_etiqueta_subtotal = QLabel("Subtotal:")
+    lbl_etiqueta_subtotal.setStyleSheet("font-size: 8pt; border: none;")
+    fila_subtotal.addWidget(lbl_etiqueta_subtotal)
+    lbl_subtotal = QLabel("$ 0,00")
+    lbl_subtotal.setStyleSheet("font-size: 8pt; border: none;")
+    fila_subtotal.addWidget(lbl_subtotal)
+    fila_subtotal.addStretch()
+    columna.addLayout(fila_subtotal)
+
+    separador = QFrame()
+    separador.setFrameShape(QFrame.Shape.HLine)
+    separador.setStyleSheet("QFrame { border: none; border-top: 1px solid #ccc; }")
+    columna.addWidget(separador)
+
+    fila_total = QHBoxLayout()
+    fila_total.setSpacing(6)
+    lbl_etiqueta_total = QLabel("TOTAL:")
+    lbl_etiqueta_total.setStyleSheet("font-weight: bold; font-size: 12pt; border: none;")
+    fila_total.addWidget(lbl_etiqueta_total)
+    lbl_total = QLabel("$ 0,00")
+    lbl_total.setStyleSheet("font-weight: bold; font-size: 12pt; border: none;")
+    fila_total.addWidget(lbl_total)
+    fila_total.addStretch()
+    columna.addLayout(fila_total)
+
+    return frame, lbl_subtotal, lbl_total
 
 
 def _formatear_localidad(cliente: "Cliente") -> str:

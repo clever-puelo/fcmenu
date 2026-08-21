@@ -30,7 +30,6 @@ from __future__ import annotations
 
 import argparse
 import os
-import subprocess
 import sys
 from decimal import Decimal
 from pathlib import Path
@@ -40,8 +39,17 @@ import psycopg2
 from sqlalchemy import text
 from sqlalchemy.engine import make_url
 
-REPO_ROOT = Path(__file__).resolve().parents[2]
-sys.path.insert(0, str(REPO_ROOT))
+# Empaquetado como .exe único (PyInstaller `--onefile`): congelado,
+# `__file__` apunta adentro de la carpeta temporal de extracción
+# (`sys._MEIPASS`), no al repo real — ahí es donde hay que buscar
+# `alembic.ini`/`migration/alembic/` (bundleados como datos, ver
+# `build_exe.py`). Corriendo desde código fuente (no congelado), sigue
+# siendo el repo de siempre.
+if getattr(sys, "frozen", False):
+    REPO_ROOT = Path(sys._MEIPASS)  # type: ignore[attr-defined]
+else:
+    REPO_ROOT = Path(__file__).resolve().parents[2]
+    sys.path.insert(0, str(REPO_ROOT))
 
 
 def _regenerar_base(app_url: str, admin_url: str) -> None:
@@ -92,16 +100,19 @@ def _aplicar_esquema() -> None:
 
 
 def _cargar_datos(fuente: str, mdb: Optional[str], modo: str, anios: int) -> None:
+    # Llamada directa a la función, NO subproceso (`sys.executable` +
+    # ruta a otro .py) — un .exe congelado no tiene un intérprete ni
+    # archivos .py sueltos para invocar así. También evita el costo de
+    # levantar un segundo proceso Python + reconectar a Postgres aparte.
     print(f"Cargando datos (fuente={fuente}, modo={modo}) ...")
     if fuente == "mdb":
-        script = "load_mdb_to_postgres.py"
-        cmd = [sys.executable, str(REPO_ROOT / "migration" / "etl" / script), "--mdb", mdb, "--modo", modo]
+        from migration.etl.load_mdb_to_postgres import cargar
+
+        cargar(mdb, modo, anios)
     else:
-        script = "load_csv_to_postgres.py"
-        cmd = [sys.executable, str(REPO_ROOT / "migration" / "etl" / script), "--modo", modo]
-    if modo == "prueba":
-        cmd += ["--anios", str(anios)]
-    subprocess.run(cmd, check=True, cwd=str(REPO_ROOT))
+        from migration.etl.load_csv_to_postgres import cargar
+
+        cargar(modo, anios)
 
 
 def _verificar(fuente: str, mdb: Optional[str], modo: str) -> None:

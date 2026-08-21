@@ -1,4 +1,4 @@
-"""Generación de PDF de Factura Electrónica — reemplaza el circuito de
+﻿"""Generación de PDF de Factura Electrónica — reemplaza el circuito de
 impresión de `EmiFact.frm` (VSPrinter/formulario preimpreso, fuera de
 alcance) y el QR externo (`Shell("qrcode.exe ...")`, bug real ya
 corregido en `migration/afip.py`).
@@ -85,6 +85,8 @@ from reportlab.lib import colors
 from reportlab.lib.pagesizes import A4, landscape
 from reportlab.lib.units import mm
 from reportlab.lib.utils import ImageReader
+from reportlab.pdfbase import pdfmetrics
+from reportlab.pdfbase.ttfonts import TTFont
 from reportlab.pdfgen import canvas
 from reportlab.platypus import PageBreak, SimpleDocTemplate, Table, TableStyle
 
@@ -113,6 +115,54 @@ DIR_SALIDA_DEFAULT = Path("migration") / "pdf_output"
 # ícono circular de fondo) que sólo usa `MainMenuWindow`, no la
 # impresión de comprobantes.
 LOGO_ALESTEL_PATH = Path(__file__).resolve().parent.parent / "assets" / "LOGO2.jpg"
+
+# --- Fuentes reales del legacy (2026-08-20, pedido del usuario: "debe
+# quedar igual al legacy") -----------------------------------------------
+# ReportLab sólo trae embebidas las 14 fuentes estándar de PDF (Helvetica,
+# Times, Courier, ...) — "Arial Black"/"Lucida Console" no están entre
+# ellas y hay que registrarlas a mano desde un .ttf real antes de poder
+# usarlas con `setFont()`. Se embeben en `assets/fonts/` (copiadas de
+# `C:\Windows\Fonts\ariblk.ttf` y del `lucon.ttf` que ya traía el propio
+# repo) para que viajen con el proyecto — y con el `.exe` empaquetado —
+# sin depender de que la PC de destino tenga esas fuentes instaladas.
+#
+# `FUENTE_TITULO`/`FUENTE_FIJA` son el punto único de verdad: si el .ttf
+# no está presente (ej. checkout parcial) caen solas a Helvetica-Bold/
+# Courier, las tipografías métricamente más parecidas, en vez de romper
+# la generación del PDF.
+_ARIAL_BLACK_PATH = Path(__file__).resolve().parent.parent / "assets" / "fonts" / "ariblk.ttf"
+_LUCIDA_CONSOLE_PATH = Path(__file__).resolve().parent.parent / "assets" / "fonts" / "lucon.ttf"
+_ARIAL_PATH = Path(__file__).resolve().parent.parent / "assets" / "fonts" / "arial.ttf"
+_ARIAL_BOLD_PATH = Path(__file__).resolve().parent.parent / "assets" / "fonts" / "arialbd.ttf"
+
+FUENTE_TITULO = 'Helvetica-Bold'  # membrete grande ("ARIAL BLACK" real del legacy: S.R.L., FACTURA, Letra, "O R I G I N A L", etc.)
+FUENTE_FIJA = 'Courier'  # bloques de ancho fijo (CUIT/IB, Son pesos..., CAE/QR)
+# El legacy también usa "Arial" (NO "Arial Black") para el resto del
+# membrete de Recibo/NC Interna (dirección, teléfono) y para toda la
+# fila de Totales de Factura (`EmiFact.frm Escribe "Arial", ...`, ver
+# `_dibujar_pie`) — es una fuente distinta de FUENTE_TITULO, más fina.
+# `FUENTE_NEGRITA` es su versión bold real (el legacy la arma con el
+# flag `negrita` de `Escribe` sobre la MISMA "Arial", no cambiando a
+# Arial Black) — antes esta fila caía en `FUENTE_TITULO` (Arial Black),
+# visualmente mucho más pesada/ancha que un Arial en negrita real.
+FUENTE_NORMAL = 'Helvetica'
+FUENTE_NEGRITA = 'Helvetica-Bold'
+
+if _ARIAL_BLACK_PATH.exists():
+    pdfmetrics.registerFont(TTFont("Arial-Black", str(_ARIAL_BLACK_PATH)))
+    FUENTE_TITULO = "Arial-Black"
+
+if _LUCIDA_CONSOLE_PATH.exists():
+    pdfmetrics.registerFont(TTFont("Lucida-Console", str(_LUCIDA_CONSOLE_PATH)))
+    FUENTE_FIJA = "Lucida-Console"
+
+if _ARIAL_PATH.exists():
+    pdfmetrics.registerFont(TTFont("Arial", str(_ARIAL_PATH)))
+    FUENTE_NORMAL = "Arial"
+
+if _ARIAL_BOLD_PATH.exists():
+    pdfmetrics.registerFont(TTFont("Arial-Bold", str(_ARIAL_BOLD_PATH)))
+    FUENTE_NEGRITA = "Arial-Bold"
 
 
 def _directorio_comprobantes(fecha: date) -> Path:
@@ -253,6 +303,11 @@ class DatosFacturaPDF:
     empresa_nombre: str = "ALESTEL SRL"
     empresa_cuit: str = "33703467909"
     en_dolares: bool = False
+    # Cotización del dólar vigente al momento de emitir — sólo se usa
+    # (impresa en la leyenda legal de `en_dolares`, ver `LeyenDol5` en
+    # `EmiFact.frm:403`/`_dibujar_pagina_factura`) cuando `en_dolares`
+    # es True; irrelevante en pesos.
+    cotizacion: Decimal = Decimal("1")
     # Cotización (`CabFact.frm TipoFac=4`) reusa este mismo layout — ver
     # `CotizacionVentaService`/`CotizacionVentaWindow`. Letra "X" fija,
     # jamás pide CAE (nunca `Graba()`), documento sin validez fiscal.
@@ -356,30 +411,30 @@ def _dibujar_pagina_factura(
     # membrete (probado y descartado, 2026-08-20); 50mm deja lugar para
     # que "S.R.L." no quede pegado.
     _dibujar_logo(c, 10 * mm, y_de(5), ancho=50 * mm)
-    c.setFont("Helvetica-Bold", 20)
+    c.setFont(FUENTE_TITULO, 20)
     # Ajuste a ojo del usuario (2026-08-20, sobre la 1ª ronda): a la
     # altura del logo (antes más arriba) y 5mm a la izquierda (antes
     # X=70 real).
     c.drawString(*pos(17, 65), "S.R.L.")
 
     # --- Membrete (Arial 9/10/7 bold, X=18-20) -----------------------------
-    c.setFont("Helvetica-Bold", 9)
+    c.setFont(FUENTE_TITULO, 9)
     c.drawString(*pos(23, 20), "CINTAS Y CORREAS DE TRANSMISIÓN")
     c.drawString(*pos(26.5, 20), "AUTOMOTORES - AGRÍCOLAS - INDUSTRIALES")
     c.drawString(*pos(30, 20), "GOMAS - ARTÍCULOS - ACCESORIOS")
-    c.setFont("Helvetica-Bold", 10)
+    c.setFont(FUENTE_TITULO, 10)
     c.drawString(*pos(35, 20), "Av. Crovara 2948 - (1766) La Tablada (BA)")
     c.drawString(*pos(39, 18), "Tel/Fax (011) 4652-1040 / 2684 / 2689 / 3080")
-    c.setFont("Helvetica-Bold", 7)
+    c.setFont(FUENTE_TITULO, 7)
     c.drawString(*pos(41.5, 30), "email: correas@alestel.com.ar")
-    c.setFont("Helvetica", 11)
+    c.setFont(FUENTE_NORMAL, 11)
     c.drawString(*pos(47, 18), "I.V.A. RESPONSABLE INSCRIPTO")
     if etiqueta_copia:
-        c.setFont("Helvetica-Bold", 9)
+        c.setFont(FUENTE_TITULO, 9)
         c.drawString(*pos(45, 100), etiqueta_copia)
 
     # --- CUIT/IB/Partida/Imp.Internos/Fec.Inicio (Lucida→Courier, X=140) --
-    c.setFont("Courier", 8)
+    c.setFont(FUENTE_FIJA, 8)
     c.drawString(*pos(31, 140), f"CUIT: {datos.empresa_cuit[:2]}-{datos.empresa_cuit[2:10]}-{datos.empresa_cuit[10:]}")
     c.drawString(*pos(34, 140), "IB Conv.Mult.: 901 33-70346790-9")
     c.drawString(*pos(37, 140), "Partida Municipal: 1985")
@@ -392,23 +447,23 @@ def _dibujar_pagina_factura(
     # tenía suelta en esta réplica; el legacy sí la encierra en su propio
     # `DibujaRect`, ver docstring del módulo).
     c.rect(99 * mm, y_de(28), 21 * mm, 15 * mm)
-    c.setFont("Helvetica-Bold", 30)
+    c.setFont(FUENTE_TITULO, 30)
     c.drawString(*pos(26, 104), datos.letra)
-    c.setFont("Helvetica", 7)
+    c.setFont(FUENTE_NORMAL, 7)
     codigo_afip_doc = {"F A C T U R A": "01", "NOTA DE CRÉDITO": "03", "NOTA DE DÉBITO": "02"}.get(
         datos.titulo_comprobante.strip(), "01" if datos.letra == "A" else "06"
     )
     c.drawString(*pos(16, 102), f"Código {codigo_afip_doc}")
 
     # --- Título + Número + Fecha ---------------------------------------
-    c.setFont("Helvetica-Bold", 20)
+    c.setFont(FUENTE_TITULO, 20)
     titulo = "COTIZACIÓN" if datos.es_cotizacion else datos.titulo_comprobante
     # Ajuste a ojo del usuario: FACTURA 5mm más abajo y 5mm más a la
     # derecha que la posición real (Y=5,X=130).
     c.drawString(*pos(10, 135), titulo)
-    c.setFont("Helvetica-Bold", 14)
+    c.setFont(FUENTE_TITULO, 14)
     c.drawString(*pos(20, 140), f"{datos.punto_venta:04d}-{datos.numero:08d}")
-    c.setFont("Helvetica", 10)
+    c.setFont(FUENTE_NORMAL, 10)
     c.drawString(*pos(27, 146), formatear_fecha_impresion(datos.fecha))
     if datos.en_dolares:
         c.drawString(*pos(31, 146), "Comprobante en DÓLARES")
@@ -417,7 +472,7 @@ def _dibujar_pagina_factura(
     # Pedido del usuario, 2026-08-20 (2ª ronda de ajustes a ojo): antes
     # suelto, ahora en un recuadro que va de margen a margen.
     c.rect(7 * mm, y_de(78), (ancho - 14 * mm), (78 - 49) * mm)
-    c.setFont("Helvetica", 10)
+    c.setFont(FUENTE_NORMAL, 10)
     c.drawString(*pos(53, 10), f"{datos.cliente_nombre}         ({datos.cliente_codigo})")
     c.drawString(*pos(58, 10), datos.cliente_domicilio)
     cp_loc_pcia = f"({datos.cliente_cp})  {datos.cliente_localidad}  {datos.cliente_provincia}".strip()
@@ -428,7 +483,7 @@ def _dibujar_pagina_factura(
     if datos.aplicada_a:
         # Sólo Nota de Crédito (`EmiFact.frm:1356-1362`), X=145-160.
         ptovta_ap, numero_ap, fecha_ap = datos.aplicada_a
-        c.setFont("Helvetica-Bold", 10)
+        c.setFont(FUENTE_TITULO, 10)
         c.drawString(*pos(63, 160), "Aplicada a:")
         c.drawString(*pos(68, 145), f"Factura Nº {ptovta_ap:04d}-{numero_ap:08d}")
         c.drawString(*pos(73, 150), f"del {fecha_ap.strftime('%d/%m/%Y')}")
@@ -442,7 +497,7 @@ def _dibujar_pagina_factura(
     # sí siguen "sin recuadros" (pedido de la 1ª ronda) — el recuadro es
     # sólo para la fila de títulos.
     c.rect(7 * mm, y_de(86), (ancho - 14 * mm), (86 - 78) * mm)
-    c.setFont("Helvetica-Bold", 10)
+    c.setFont(FUENTE_TITULO, 10)
     c.drawString(*pos(83, 12), "Cant.")
     c.drawString(*pos(83, 56), "Detalle")
     c.drawString(*pos(83, 83), "Despacho")
@@ -454,7 +509,7 @@ def _dibujar_pagina_factura(
     # entrar entre Y=92 (arranque real de la tabla) y Y≈231 (subtotal
     # crudo) — 139mm de espacio ÷ 30 = ~4.6mm/renglón.
     ALTO_RENGLON_MM = 4.6
-    c.setFont("Helvetica", 8)
+    c.setFont(FUENTE_NORMAL, 8)
     descuentos_renglones = datos.descuentos_renglones or []
     lin = 92.0
     for indice, renglon in enumerate(datos.renglones[:30]):
@@ -470,12 +525,36 @@ def _dibujar_pagina_factura(
         c.drawRightString(*pos(lin, 198), format_decimal(renglon.importe))
         lin += ALTO_RENGLON_MM
 
+    # --- Leyenda legal "en Dólares" (réplica EmiFact.frm:1085-1094, sólo
+    # si `en_dolares`) — 5 líneas fijas (Lucida Console) + 3 etiquetas
+    # "U$S" (Arial bold) sobre las cajas de Subtotal/Subtotal neto/TOTAL
+    # más abajo. Texto SIN tildes tal cual el legacy (charset ANSI de
+    # VB6 de la época, no un error de tipeo nuestro — mismo criterio que
+    # `monto_en_palabras`, "igual al legacy" incluye sus mayúsculas sin
+    # acentuar).
+    if datos.en_dolares:
+        # Réplica fiel: en el legacy estas 5 líneas están en las mismas
+        # posiciones ABSOLUTAS que el área de renglones (Y=92-231) — si
+        # una Factura en dólares tuviera más de ~22 renglones cargados,
+        # la leyenda se superpondría a los últimos, igual que en el
+        # original (no es un bug nuestro, es una limitación real del
+        # legacy que no corresponde "corregir" acá).
+        c.setFont(FUENTE_FIJA, 7)
+        c.drawString(*pos(195, 10), "LA PRESENTE FACTURA SE ABONARA EN DOLARES ESTADOUNIDENSES BILLETES O EN LA CANTIDAD DE PESOS")
+        c.drawString(*pos(199, 10), "SUFICIENTES PARA CANCELAR LA SUMA TOTAL EN DOLARES  AL TIPO DE CAMBIO VENDEDOR DEL B.N.A. DEL")
+        c.drawString(*pos(203, 10), "MERCADO OFICIAL QUE RIJA PARA LAS IMPORTACIONES DE BIENES (O AQUEL QUE EN EL FUTURO LO ")
+        c.drawString(*pos(207, 10), "SUSTITUYA) DEL DIA ANTERIOR AL EFECTIVO PAGO.---------------------------------------------")
+        c.drawString(*pos(211, 10), f"A LOS EFECTOS IMPOSITIVOS EL TIPO DE CAMBIO APLICADO ES u$s 1= $ {format_decimal(datos.cotizacion)}")
+        c.setFont(FUENTE_NEGRITA, 8)
+        for x_mm in (22, 72, 188):
+            c.drawString(*pos(250.5, x_mm), "U$S")
+
     # --- Subtotal crudo (sin etiqueta, réplica EmiFact.frm:1637, Y=231) ---
-    c.setFont("Helvetica-Bold", 9)
+    c.setFont(FUENTE_TITULO, 9)
     c.drawRightString(*pos(231, 198), format_decimal(datos.total.bruto))
 
     # --- Son pesos... (réplica MontoEscrito, Y=236/240/244, X=30) ---------
-    c.setFont("Courier", 7)
+    c.setFont(FUENTE_FIJA, 7)
     prefijo_moneda = "Son dólares " if datos.en_dolares else "Son pesos "
     texto_letras = prefijo_moneda + monto_en_palabras(datos.total.total)
     for i, inicio in enumerate((0, 70, 140)):
@@ -515,13 +594,13 @@ def _dibujar_pagina_factura(
         # Tamaño 10 real (`Escribe ...,10,...`) — antes 8, por eso los
         # títulos se veían más chicos/corridos a la izquierda que los
         # valores de abajo (2ª ronda de ajustes a ojo).
-        c.setFont("Helvetica-Bold" if negrita else "Helvetica", 10)
+        c.setFont(FUENTE_NEGRITA if negrita else FUENTE_NORMAL, 10)
         c.drawString(*pos(255, x_mm + 2), etiqueta)
-        c.setFont("Helvetica-Bold" if es_total else "Helvetica", 9)
+        c.setFont(FUENTE_NEGRITA if es_total else FUENTE_NORMAL, 9)
         c.drawRightString(*pos(266, x_mm + ancho_caja_mm - 2), format_decimal(valor))
 
     # --- CAE + Vencimiento + QR (Y=270/274/269, X=132/137/7) ---------------
-    c.setFont("Courier", 10)
+    c.setFont(FUENTE_FIJA, 10)
     if datos.es_cotizacion:
         # Nunca lleva CAE/QR (TipoFac=4 jamás llama a ConectaAFIP/Graba
         # en el legacy) ni el sello "BORRADOR" — no es un boceto de un
@@ -535,7 +614,7 @@ def _dibujar_pagina_factura(
         if datos.observaciones_afip:
             # Réplica de EmiFact.frm:1722-1725 — AFIP puede aprobar CON
             # advertencias, no sólo rechazar.
-            c.setFont("Helvetica", 7)
+            c.setFont(FUENTE_NORMAL, 7)
             c.drawString(*pos(284, 40), f"Se asignó CAE pero con advertencias. Motivo: {datos.observaciones_afip}")
 
         qr_widget = qr.QrCodeWidget(datos.qr_url)
@@ -557,7 +636,7 @@ def _dibujar_sello_borrador(c: canvas.Canvas, ancho: float, alto: float) -> None
     confunda con el comprobante fiscal real."""
     c.saveState()
     c.setFillColorRGB(0.85, 0.2, 0.2, alpha=0.35)
-    c.setFont("Helvetica-Bold", 60)
+    c.setFont(FUENTE_TITULO, 60)
     c.translate(ancho / 2, alto / 2)
     c.rotate(35)
     c.drawCentredString(0, 0, "BORRADOR")
@@ -635,10 +714,10 @@ def _dibujar_membrete_no_fiscal(
         return alto - (y_top_mm + lin_mm) * mm
 
     _dibujar_logo(c, 8 * mm, y_pt(0), ancho=26 * mm)
-    c.setFont("Helvetica-Bold", 13)
+    c.setFont(FUENTE_TITULO, 13)
     c.drawString(*pos(11, 40), "S.R.L.")
 
-    c.setFont("Helvetica-Bold", 18)
+    c.setFont(FUENTE_TITULO, 18)
     c.rect(98 * mm, y_pt(15), 15 * mm, 13 * mm)
     c.drawCentredString(105.5 * mm, y_pt(12), letra)
 
@@ -647,22 +726,22 @@ def _dibujar_membrete_no_fiscal(
     # su propia línea debajo (no al lado, que es lo que colisionaba con
     # títulos largos).
     tamano_titulo = 15 if len(titulo) <= 16 else 12
-    c.setFont("Helvetica-Bold", tamano_titulo)
+    c.setFont(FUENTE_TITULO, tamano_titulo)
     c.drawString(*pos(11, 118), titulo)
-    c.setFont("Helvetica-Bold", 10)
+    c.setFont(FUENTE_TITULO, 10)
     c.drawString(*pos(19.5, 118), numero_texto)
-    c.setFont("Helvetica", 6.5)
+    c.setFont(FUENTE_NORMAL, 6.5)
     c.drawString(*pos(19, 98), "Documento no")
     c.drawString(*pos(22, 98), "válido como Factura")
 
-    c.setFont("Helvetica", 9)
+    c.setFont(FUENTE_NORMAL, 9)
     c.drawRightString(ancho - 8 * mm, y_pt(5), f"Buenos Aires, {formatear_fecha_impresion(fecha)}")
 
-    c.setFont("Helvetica-Bold", 8)
+    c.setFont(FUENTE_TITULO, 8)
     c.drawString(*pos(23, 14), "Av. Crovara 2948 - (1766) La Tablada (BA)")
     c.drawString(*pos(28, 14), "Tel. (011) 4652-1040 / 2684 / 2689 / 3080")
 
-    c.setFont("Helvetica", 7)
+    c.setFont(FUENTE_NORMAL, 7)
     c.drawString(*pos(23, 120), "Imp.Int.: No Resp.   I.B.: 901 33-70346790-9")
     c.drawString(*pos(28, 120), "Part.Munic.: 1985   CUIT: 33-70346790-9")
 
@@ -705,14 +784,14 @@ def _dibujar_copia_recibo(
 
     margen_x = 8 * mm
     y = y_pt(32)
-    c.setFont("Helvetica-Bold", 9)
+    c.setFont(FUENTE_TITULO, 9)
     c.drawString(margen_x, y, f"Sr./es: ({datos.cliente_codigo}) {datos.cliente_nombre}")
-    c.setFont("Helvetica", 9)
+    c.setFont(FUENTE_NORMAL, 9)
     y = y_pt(37)
     c.drawString(margen_x, y, datos.cliente_domicilio)
     y = y_pt(42)
     c.drawString(margen_x, y, f"({datos.cliente_cp}) {datos.cliente_localidad} {datos.cliente_provincia_codigo}".strip())
-    c.setFont("Helvetica-Bold", 9)
+    c.setFont(FUENTE_TITULO, 9)
     c.drawString(
         margen_x + 92 * mm, y,
         f"IVA: {CONDICIONES_IVA.get(datos.cliente_civa, '—')}     CUIT : {datos.cliente_cuit or 's/d'}",
@@ -720,11 +799,11 @@ def _dibujar_copia_recibo(
 
     # --- Comprobantes Cancelados / Valores Recibidos (2 columnas) --------
     y = y_pt(46)
-    c.setFont("Helvetica-Bold", 8)
+    c.setFont(FUENTE_TITULO, 8)
     c.drawString(margen_x, y, "Comprobantes Cancelados")
     c.drawString(margen_x + 90 * mm, y, "Valores Recibidos")
     y = y_pt(49)
-    c.setFont("Helvetica-Bold", 7)
+    c.setFont(FUENTE_TITULO, 7)
     c.drawString(margen_x, y, "Tipo")
     c.drawString(margen_x + 15 * mm, y, "Nro.")
     c.drawString(margen_x + 35 * mm, y, "Fecha")
@@ -734,7 +813,7 @@ def _dibujar_copia_recibo(
     c.drawString(margen_x + 145 * mm, y, "Fecha")
     c.drawRightString(margen_x + 192 * mm, y, "Importe")
 
-    c.setFont("Helvetica", 7)
+    c.setFont(FUENTE_NORMAL, 7)
     y_izq = y - 8
     for aplicacion in datos.aplicaciones:
         y_izq -= 8
@@ -771,7 +850,7 @@ def _dibujar_copia_recibo(
 
     # --- Totales + firma ---------------------------------------------------
     y = y_pt(101)
-    c.setFont("Helvetica", 8)
+    c.setFont(FUENTE_NORMAL, 8)
     c.drawString(margen_x, y, f"Total Cancelado: {format_decimal(datos.total_pago)}")
     total_valores = sum(
         [datos.importe_efectivo] + [p.importe for p in datos.cheques] + [r.importe for r in datos.retenciones],
@@ -780,22 +859,22 @@ def _dibujar_copia_recibo(
     c.drawString(margen_x + 90 * mm, y, f"Total Valores: {format_decimal(total_valores)}")
 
     y = y_pt(107)
-    c.setFont("Helvetica-Bold", 10)
+    c.setFont(FUENTE_TITULO, 10)
     c.drawString(margen_x, y, f"Total: $ {format_decimal(datos.total_pago)}")
-    c.setFont("Helvetica", 8)
+    c.setFont(FUENTE_NORMAL, 8)
     c.drawString(margen_x + 40 * mm, y, f"Son Pesos: {monto_en_palabras(datos.total_pago)}")
 
     y = y_pt(120)
     c.drawString(ancho - margen_x - 45 * mm, y, "___________________")
     c.drawCentredString(ancho - margen_x - 22 * mm, y_pt(125), "Por Alestel SRL")
 
-    c.setFont("Helvetica", 7)
+    c.setFont(FUENTE_NORMAL, 7)
     c.drawString(margen_x, y_pt(125), "Este pago no implica cancelación de intereses por pago de facturas fuera de término")
 
-    c.setFont("Helvetica-Bold", 8)
+    c.setFont(FUENTE_TITULO, 8)
     c.drawRightString(ancho - margen_x, y_pt(132), etiqueta_copia)
 
-    c.setFont("Helvetica", 6)
+    c.setFont(FUENTE_NORMAL, 6)
     c.drawString(margen_x, y_pt(132), f"Correlativo: {datos.correlativo}")
 
 
@@ -865,29 +944,29 @@ def _dibujar_copia_nci(
     )
 
     margen_x = 8 * mm
-    c.setFont("Helvetica-Bold", 9)
+    c.setFont(FUENTE_TITULO, 9)
     c.drawString(margen_x, y_pt(32), f"Sr./es: ({datos.cliente_codigo}) {datos.cliente_nombre}")
-    c.setFont("Helvetica", 9)
+    c.setFont(FUENTE_NORMAL, 9)
     c.drawString(margen_x, y_pt(37), datos.cliente_domicilio)
     c.drawString(margen_x, y_pt(42), f"({datos.cliente_cp}) {datos.cliente_localidad} {datos.cliente_provincia_codigo}".strip())
-    c.setFont("Helvetica-Bold", 9)
+    c.setFont(FUENTE_TITULO, 9)
     c.drawString(
         margen_x + 92 * mm, y_pt(42),
         f"IVA: {CONDICIONES_IVA.get(datos.cliente_civa, '—')}     CUIT : {datos.cliente_cuit or 's/d'}",
     )
 
     y = y_pt(46)
-    c.setFont("Helvetica-Bold", 8)
+    c.setFont(FUENTE_TITULO, 8)
     c.drawString(margen_x, y, "Comprobantes Cancelados")
     y -= 10
-    c.setFont("Helvetica-Bold", 7)
+    c.setFont(FUENTE_TITULO, 7)
     c.drawString(margen_x, y, "Tipo")
     c.drawString(margen_x + 20 * mm, y, "Nro.")
     c.drawString(margen_x + 45 * mm, y, "Fecha")
     c.drawRightString(margen_x + 130 * mm, y, "Importe")
     c.drawRightString(margen_x + 175 * mm, y, "Cancelado")
 
-    c.setFont("Helvetica", 7.5)
+    c.setFont(FUENTE_NORMAL, 7.5)
     for aplicacion in datos.comprobantes_cancelados:
         y -= 8
         if y < y_pt(100):
@@ -902,9 +981,9 @@ def _dibujar_copia_nci(
         c.drawRightString(margen_x + 175 * mm, y, format_decimal(aplicacion.importe_aplicado))
 
     y = y_pt(101)
-    c.setFont("Helvetica-Bold", 10)
+    c.setFont(FUENTE_TITULO, 10)
     c.drawString(margen_x, y, f"Total: $ {format_decimal(datos.total_cancelado)}")
-    c.setFont("Helvetica", 8)
+    c.setFont(FUENTE_NORMAL, 8)
     c.drawString(margen_x + 45 * mm, y, f"Son Pesos: {monto_en_palabras(datos.total_cancelado)}")
 
     y = y_pt(112)
@@ -920,7 +999,7 @@ def _dibujar_copia_nci(
     c.drawString(ancho - margen_x - 45 * mm, y_firma, "___________________")
     c.drawCentredString(ancho - margen_x - 22 * mm, y_pt(125), "Confeccionó")
 
-    c.setFont("Helvetica-Bold", 8)
+    c.setFont(FUENTE_TITULO, 8)
     c.drawRightString(ancho - margen_x, y_pt(132), etiqueta_copia)
 
 
@@ -1003,12 +1082,16 @@ def generar_pdf_listado(
     # generoso ahí (60pt/24pt) sin pedido explícito, que le sacaba
     # renglones de más a cada hoja — ahora es sólo lo que ocupa el texto
     # (empresa/fecha + título + subtítulo arriba; "Hoja N de M" abajo)
-    # más 2mm de aire antes de que arranque/termine la tabla de datos.
-    GAP_ENCABEZADO_PIE = 2 * mm
+    # más el aire pedido antes de que arranque/termine la tabla de datos.
+    # El de abajo se ensanchó a 5mm el 2026-08-21 (pedido explícito: "que
+    # quede a 5mm de 'Hoja...'" — 2mm quedaba demasiado pegado); el de
+    # arriba sigue en 2mm, no se tocó.
+    GAP_ENCABEZADO = 2 * mm
+    GAP_PIE = 5 * mm
     alto_texto_encabezado = 40  # empresa/fecha + título + subtítulo (ver `_dibujar_marco`)
     alto_texto_pie = 10  # una línea de 8pt ("Hoja N de M")
-    alto_encabezado = alto_texto_encabezado + GAP_ENCABEZADO_PIE
-    alto_pie = alto_texto_pie + GAP_ENCABEZADO_PIE
+    alto_encabezado = alto_texto_encabezado + GAP_ENCABEZADO
+    alto_pie = alto_texto_pie + GAP_PIE
     top_margin = margen + alto_encabezado
     bottom_margin = margen + alto_pie
 
@@ -1036,7 +1119,7 @@ def generar_pdf_listado(
         # arriba a propósito, para pisar el "RIGHT" de esa fila con
         # "CENTER" (los comandos de `TableStyle` se aplican en orden, el
         # último gana sobre el mismo rango).
-        estilo.append(("FONTNAME", (0, 0), (-1, 0), "Helvetica-Bold"))
+        estilo.append(("FONTNAME", (0, 0), (-1, 0), FUENTE_TITULO))
         estilo.append(("FONTSIZE", (0, 0), (-1, 0), 9))
         estilo.append(("ALIGN", (0, 0), (-1, 0), "CENTER"))
         estilo.append(("LINEBELOW", (0, 0), (-1, 0), 1, colors.black))
@@ -1062,11 +1145,18 @@ def generar_pdf_listado(
 
     alto_fila = max(_alto_header_mas_fila - _alto_header, 1)
     alto_util_datos = alto_pagina - top_margin - bottom_margin
-    # Colchón generoso (Viene + Transporte + hasta 3 líneas de `pie` + el
-    # renglón de conteo) — mejor una página con algo de aire de más que
-    # arriesgar el mismo desborde; si igual se queda corta, Platypus
-    # parte la tabla puntual sola (red de seguridad, no se pierde nada).
-    FILAS_RESERVADAS = 6
+    # Colchón para "Viene"/`pie`/el renglón de conteo, calculado — no un
+    # número fijo "por las dudas" (pedido del usuario, 2026-08-21: "queda
+    # mucho espacio desaprovechado al final de la hoja"; un colchón fijo
+    # de 6 renglones reservaba de más en la enorme mayoría de los
+    # listados reales, que no usan `columna_transporte` — "Viene" NUNCA
+    # aparece ahí, y muchos ni siquiera tienen `pie`). "Viene" y
+    # "Transporte" nunca están juntos en la misma hoja (uno es de
+    # arranque, el otro de cierre), así que contarlos como si pudieran
+    # coincidir era además doble margen de más. Si el cálculo se queda
+    # corto en algún caso límite, Platypus parte la tabla puntual sola
+    # (red de seguridad ya existente, no se pierde nada).
+    FILAS_RESERVADAS = (1 if columna_transporte is not None else 0) + len(pie or []) + 1
     filas_por_pagina = max(1, int((alto_util_datos - _alto_header) / alto_fila) - FILAS_RESERVADAS)
 
     def _fila_total(etiqueta: str, valor: str, columna: int) -> list[str]:
@@ -1084,7 +1174,7 @@ def generar_pdf_listado(
         return fila
 
     def _estilizar_fila_total(estilo: list[tuple], fila_idx: int, columna: int) -> None:
-        estilo.append(("FONTNAME", (0, fila_idx), (-1, fila_idx), "Helvetica-Bold"))
+        estilo.append(("FONTNAME", (0, fila_idx), (-1, fila_idx), FUENTE_TITULO))
         if columna > 0:
             estilo.append(("SPAN", (0, fila_idx), (columna - 1, fila_idx)))
             estilo.append(("BOX", (columna, fila_idx), (columna, fila_idx), 0.8, colors.black))
@@ -1181,11 +1271,11 @@ def generar_pdf_listado(
         def _dibujar_marco(self, total_paginas: int) -> None:
             self.saveState()
             y_tope = alto_pagina - margen
-            self.setFont("Helvetica-Bold", 11)
+            self.setFont(FUENTE_TITULO, 11)
             self.drawString(margen, y_tope - 8, "ALESTEL SRL")
             self.setFont("Helvetica", 9)
             self.drawRightString(ancho_pagina - margen, y_tope - 8, formatear_fecha_corta(date.today()))
-            self.setFont("Helvetica-Bold", 13)
+            self.setFont(FUENTE_TITULO, 13)
             self.drawCentredString(ancho_pagina / 2, y_tope - 26, titulo)
             self.setFont("Helvetica", 8.5)
             self.drawCentredString(ancho_pagina / 2, y_tope - 38, subtitulo)

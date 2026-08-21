@@ -31,15 +31,18 @@ Interacción confirmada:
 
 from __future__ import annotations
 
-from dataclasses import dataclass, field
+from dataclasses import dataclass
 from decimal import Decimal
 from typing import Callable, Optional
 
-from PyQt6.QtCore import Qt, QTimer
+from PyQt6.QtCore import QRegularExpression, Qt, QTimer
+from PyQt6.QtGui import QRegularExpressionValidator
 from PyQt6.QtWidgets import (
     QAbstractItemDelegate,
     QAbstractItemView,
+    QLineEdit,
     QMessageBox,
+    QStyledItemDelegate,
     QTableWidget,
     QTableWidgetItem,
     QWidget,
@@ -59,8 +62,7 @@ from .factura_renglon import (
     SeccionRenglon,
     SeccionSinUnidadFacturacionError,
     armar_codigo_renglon,
-    calcular_precio_e_importe,
-    calcular_precio_preview,
+    calcular_importe,
     descripcion_con_segmentos,
     resolver_precio_articulo,
     resolver_seccion_renglon,
@@ -101,13 +103,45 @@ COLUMNAS_SIEMPRE_BLOQUEADAS = {COL_IMPORTE, COL_LOTE}
 # ("**" para ítem libre), el resto siempre es una cantidad o un importe.
 COLUMNAS_NUMERICAS = {COL_POS1, COL_POS2, COL_POS3, COL_POS4, COL_POS6, COL_PRECIO, COL_IMPORTE}
 
+# Desvío máximo tolerado sin aviso entre el precio de lista y el que tipea
+# el operador a mano en Precio Unit. — pedido del usuario (2026-08-21):
+# "avise si el operador supera en un 20% en más o menos el valor
+# original". Ver `DetalleGrid._on_precio_editado`.
+DESVIO_PRECIO_MAXIMO = Decimal("0.20")
+
 
 @dataclass
 class _EstadoFila:
     seccion: Optional[SeccionRenglon] = None
     articulo: Optional[Articulo] = None
     nrodesp_elegido: Optional[str] = None
-    precio_base: Decimal = field(default_factory=lambda: Decimal("0"))
+    # Precio de lista del Artículo (ya convertido por cotización) — se
+    # fija UNA sola vez al resolver el Artículo y no se vuelve a tocar;
+    # es la referencia del aviso de desvío ±20% (`_on_precio_editado`,
+    # 2026-08-21). `None` para ítem libre (sin Artículo, nada contra qué
+    # comparar). El precio que de verdad se usa para calcular el
+    # Importe es el que esté tipeado en la celda en ese momento (ver
+    # `_recalcular_fila`), no este campo.
+    precio_lista: Optional[Decimal] = None
+
+
+class _DelegadoNumerico(QStyledItemDelegate):
+    """Filtra el editor de las columnas numéricas (`COLUMNAS_NUMERICAS`
+    — cantidades y Precio Unit.) para que sólo dejen tipear dígitos y
+    una coma decimal, mismo criterio que `MontoLineEdit`/`EnteroLineEdit`
+    (`widgets.py`) para el resto de la app — pedido del usuario
+    (2026-08-21): "no debe permitir ingresar letras en las cantidades".
+    El editor default de `QTableWidget` es un `QLineEdit` sin ninguna
+    restricción; acá se le agrega un validador recién al crearlo, sin
+    tocar el resto del comportamiento de edición de la grilla."""
+
+    _VALIDADOR = QRegularExpressionValidator(QRegularExpression(r"[0-9]*,?[0-9]*"))
+
+    def createEditor(self, parent, option, index):  # noqa: N802 (Qt override)
+        editor = super().createEditor(parent, option, index)
+        if index.column() in COLUMNAS_NUMERICAS and isinstance(editor, QLineEdit):
+            editor.setValidator(self._VALIDADOR)
+        return editor
 
 
 class DetalleGrid(QTableWidget):
@@ -136,13 +170,16 @@ class DetalleGrid(QTableWidget):
         # `_iniciar_edicion()`/`closeEditor()`).
         self._celda_editando: Optional[tuple[int, int]] = None
 
+        self.setItemDelegate(_DelegadoNumerico(self))
         self.setHorizontalHeaderLabels(COLUMNAS)
         self.setSelectionBehavior(QAbstractItemView.SelectionBehavior.SelectItems)
         self.setSelectionMode(QAbstractItemView.SelectionMode.SingleSelection)
         self.verticalHeader().setVisible(False)
-        # Filas 10% más cortas (feedback del usuario, 2026-08-19): entran
-        # más renglones a la vista sin achicar la letra.
-        compactar_alto_filas(self)
+        # Filas más cortas (feedback del usuario, 2026-08-19, apretado
+        # más el 2026-08-21 — "deben ser 10 [renglones] aprox", con 4
+        # visibles no alcanzaba): entran más renglones a la vista sin
+        # achicar la letra.
+        compactar_alto_filas(self, pct=82)
         self.setEditTriggers(
             QAbstractItemView.EditTrigger.DoubleClicked
             | QAbstractItemView.EditTrigger.EditKeyPressed
@@ -309,10 +346,15 @@ class DetalleGrid(QTableWidget):
         posiciones_activas = {s.posicion for s in seccion.segmentos_codigo} | {s.posicion for s in seccion.segmentos_cantidad}
         for posicion, columna in POSICION_A_COLUMNA.items():
             self._set_editable(fila, columna, posicion in posiciones_activas)
-        # Descripción/Precio: en ítem libre los tipea el operador; si hay
-        # Artículo real, se autogeneran y no se tocan a mano.
+        # Descripción: en ítem libre la tipea el operador; si hay
+        # Artículo real, se autogenera y no se toca a mano. Precio: SÍ
+        # editable para cualquier Artículo ya resuelto (no sólo ítem
+        # libre) — pedido del usuario (2026-08-21): "debe permitir que
+        # el operador modifique el precio". Antes de resolver el
+        # Artículo (o la Sección en sí) todavía no hay nada que
+        # editar/mostrar ahí.
         self._set_editable(fila, COL_DESCRIPCION, es_libre)
-        self._set_editable(fila, COL_PRECIO, es_libre)
+        self._set_editable(fila, COL_PRECIO, es_libre or estado.articulo is not None)
 
     # ------------------------------------------------------------------
     # Edición de celdas
@@ -335,7 +377,9 @@ class DetalleGrid(QTableWidget):
     def _procesar_dato_cambiado(self, fila: int, columna: int) -> None:
         if columna == COL_SECCION:
             self._on_seccion_editada(fila, self._texto(fila, columna))
-        elif columna in (COL_POS1, COL_POS2, COL_POS3, COL_POS4, COL_POS6, COL_PRECIO):
+        elif columna == COL_PRECIO:
+            self._on_precio_editado(fila)
+        elif columna in (COL_POS1, COL_POS2, COL_POS3, COL_POS4, COL_POS6):
             self._reconsiderar_codigo_y_recalcular(fila, columna)
 
         self._al_cambiar()
@@ -466,32 +510,25 @@ class DetalleGrid(QTableWidget):
         self._recalcular_fila(fila)
 
     def _recalcular_fila(self, fila: int) -> None:
+        """Recalcula sólo el Importe — el Precio Unitario NUNCA se toca
+        acá (pedido del usuario, 2026-08-21: "deje el precio unitario
+        del archivo sin modificar... muestre siempre el de la lista o
+        el que cargó el operador"). Siempre lee el precio TAL COMO ESTÁ
+        en la celda en este momento (de lista, recién resuelto el
+        Artículo, o editado a mano) — ver `calcular_importe`."""
         estado = self._estado.get(fila)
         if estado is None or estado.seccion is None:
             return
 
-        if estado.seccion.cod_seccion == SECCION_ITEM_LIBRE:
-            estado.precio_base = parse_decimal(self._texto(fila, COL_PRECIO))
+        precio_actual = parse_decimal(self._texto(fila, COL_PRECIO))
 
         valores_cantidad = {}
         for segmento in estado.seccion.segmentos_cantidad:
             columna = POSICION_A_COLUMNA[segmento.posicion]
             valores_cantidad[segmento.alf_index] = parse_decimal(self._texto(fila, columna))
 
-        # Precio "en construcción" (feedback del usuario, 2026-08-15): se
-        # muestra apenas se conoce el precio base del Artículo, y se va
-        # actualizando solo a medida que se completan los segmentos de
-        # cálculo (ALF4-6) — no hace falta esperar a que la Cantidad
-        # (Unidad de Facturación) esté cargada para ver el Precio Unitario.
-        precio_preview = calcular_precio_preview(estado.precio_base, valores_cantidad, estado.seccion)
-        self._actualizando = True
         try:
-            self._set_texto(fila, COL_PRECIO, format_decimal(precio_preview))
-        finally:
-            self._actualizando = False
-
-        try:
-            precio_unitario, importe = calcular_precio_e_importe(estado.precio_base, valores_cantidad, estado.seccion)
+            importe = calcular_importe(precio_actual, valores_cantidad, estado.seccion)
         except (ValueError, SeccionSinUnidadFacturacionError):
             self._actualizando = True
             try:
@@ -502,10 +539,30 @@ class DetalleGrid(QTableWidget):
 
         self._actualizando = True
         try:
-            self._set_texto(fila, COL_PRECIO, format_decimal(precio_unitario))
             self._set_texto(fila, COL_IMPORTE, format_decimal(importe))
         finally:
             self._actualizando = False
+
+    def _on_precio_editado(self, fila: int) -> None:
+        """Dispara el aviso de desvío ±20% (si corresponde — hay
+        precio de lista contra qué comparar, no es ítem libre) y
+        recalcula el Importe con el precio nuevo. "Al final del
+        ingreso" (no en cada tecla): se llama recién cuando la celda de
+        Precio se CIERRA (Enter/Tab), mismo punto que dispara cualquier
+        otro recálculo de la grilla."""
+        estado = self._estado.get(fila)
+        if estado is not None and estado.precio_lista:
+            precio_actual = parse_decimal(self._texto(fila, COL_PRECIO))
+            diferencia = precio_actual - estado.precio_lista
+            if abs(diferencia) > estado.precio_lista * DESVIO_PRECIO_MAXIMO:
+                direccion = "por ENCIMA" if diferencia > 0 else "por DEBAJO"
+                QMessageBox.warning(
+                    self,
+                    "Detalle",
+                    f"El precio tipeado (${format_decimal(precio_actual)}) está {direccion} en más "
+                    f"de un 20% del precio de lista (${format_decimal(estado.precio_lista)}).",
+                )
+        self._recalcular_fila(fila)
 
     # ------------------------------------------------------------------
     # Selector de Artículo (F2 / Enter en Sección vacía / código completo)
@@ -550,7 +607,12 @@ class DetalleGrid(QTableWidget):
             self._limpiar_fila(fila)
             self._iniciar_edicion(fila, COL_SECCION)
             return
-        estado.precio_base = precio_base
+        # Precio de lista — referencia fija para el aviso ±20%, y valor
+        # inicial de la celda (pedido del usuario, 2026-08-21: "muestre
+        # siempre el de la lista o el que cargó el operador"). Se
+        # escribe UNA sola vez acá; de ahí en más `_recalcular_fila`
+        # nunca la vuelve a tocar sola.
+        estado.precio_lista = precio_base
 
         self._actualizando = True
         try:
@@ -558,6 +620,7 @@ class DetalleGrid(QTableWidget):
             for segmento, valor in zip(seccion.segmentos_codigo, valores_codigo):
                 self._set_texto(fila, POSICION_A_COLUMNA[segmento.posicion], formatear_segmento(valor, segmento))
             self._set_texto(fila, COL_DESCRIPCION, descripcion)
+            self._set_texto(fila, COL_PRECIO, format_decimal(precio_base))
         finally:
             self._actualizando = False
 
@@ -687,26 +750,78 @@ class DetalleGrid(QTableWidget):
             self._abrir_selector_articulo(fila)
             return
 
+        if self.state() == QAbstractItemView.State.EditingState:
+            # Bug real encontrado con teclado real (2026-08-21, "PL":
+            # tipear MM, Enter, Telas, Enter): completar a mano el
+            # ÚLTIMO segmento de código resuelve el Artículo y YA
+            # navega sola a la primera cantidad
+            # (`_procesar_dato_cambiado` -> `_reconsiderar_codigo_y_
+            # recalcular` -> `_aplicar_articulo` -> `_iniciar_edicion`,
+            # encolada con `QTimer.singleShot(0, ...)` desde
+            # `_on_item_changed` — corre ANTES que este callback en la
+            # misma vuelta del loop de eventos, porque se encola antes
+            # que el propio `closeEditor()` encola a éste). Sin esta
+            # guarda, ACÁ TAMBIÉN se abría un segundo editor sobre la
+            # celda "siguiente" (calculada con el orden viejo de ESTA
+            # celda) mientras el primero ya estaba abierto — Qt no lo
+            # deja y tira "QAbstractItemView::edit: editing failed" por
+            # consola, sin ningún aviso visible en la app. Si ya hay una
+            # edición en curso (la abrió otro camino mientras este
+            # callback esperaba su turno), no hay nada para navegar acá.
+            return
+
         siguiente = self._siguiente_celda_editable(fila, columna)
         if siguiente is not None:
             self._iniciar_edicion(*siguiente)
 
+    def _orden_columnas_fila(self, seccion: Optional[SeccionRenglon]) -> list[int]:
+        """Orden real de CARGA (Enter) de una fila — a diferencia del
+        orden VISUAL fijo de columnas (Nro/Pulg, Mtr/Kg, MM, Telas: los
+        mismos 4 slots físicos para cualquier Sección, ver
+        `POSICION_A_COLUMNA`/`Posi()` del legacy), el orden en que el
+        operador tiene que completarlas depende de la Sección real
+        (`ALF1..ALF7` de `Fctabla1`, ver `resolver_seccion_renglon`).
+
+        **Bug real reportado por el usuario (2026-08-21, probado con la
+        Sección "PL")**: tipear a mano debía saltar "a MM y luego a
+        Telas y luego a Pulgadas y luego a Metros" — que es exactamente
+        `segmentos_codigo` (arma el código del Artículo, ALF1-3) seguido
+        de `segmentos_cantidad` (multiplican el precio, ALF4-7), NO el
+        orden fijo de columnas de la grilla (que para PL daría Pulgadas
+        antes que MM). Con F2 el código ya saltaba bien directo a la
+        primera cantidad (`_aplicar_articulo` -> `_iniciar_edicion`),
+        pero el PRÓXIMO Enter volvía a caer en MM/Telas — codificadas
+        como "editables" (correcto, siguen usándose) pero sin ningún
+        lugar que supiera que ya estaban completas y venían ANTES en el
+        orden real, no después."""
+        orden = [COL_SECCION]
+        if seccion is not None:
+            orden += [POSICION_A_COLUMNA[s.posicion] for s in seccion.segmentos_codigo]
+            orden.append(COL_DESCRIPCION)
+            orden += [POSICION_A_COLUMNA[s.posicion] for s in seccion.segmentos_cantidad]
+            orden.append(COL_PRECIO)
+        else:
+            orden += [COL_POS1, COL_POS2, COL_POS3, COL_POS4, COL_DESCRIPCION, COL_POS6, COL_PRECIO]
+        orden += [COL_IMPORTE, COL_LOTE]
+        return orden
+
     def _siguiente_celda_editable(self, fila: int, columna: int) -> Optional[tuple[int, int]]:
-        total_columnas = self.columnCount()
-        col = columna + 1
         vueltas_de_seguridad = 0
-        while vueltas_de_seguridad < total_columnas * 2 + 4:
-            if col >= total_columnas:
-                fila += 1
-                col = 0
-                self._asegurar_fila_vacia_al_final()
-                if fila >= self.rowCount():
-                    return None
-            item = self.item(fila, col)
-            editable = bool(item is not None and (item.flags() & Qt.ItemFlag.ItemIsEditable))
-            if editable:
-                return fila, col
-            col += 1
+        while vueltas_de_seguridad < self.rowCount() * 2 + 4:
+            seccion = self._estado.get(fila, _EstadoFila()).seccion
+            orden = self._orden_columnas_fila(seccion)
+            desde = orden.index(columna) + 1 if columna in orden else 0
+            for col in orden[desde:]:
+                item = self.item(fila, col)
+                editable = bool(item is not None and (item.flags() & Qt.ItemFlag.ItemIsEditable))
+                if editable:
+                    return fila, col
+
+            fila += 1
+            columna = -1  # no pertenece a ningún orden -> `desde = 0`, arranca desde el principio de la fila nueva
+            self._asegurar_fila_vacia_al_final()
+            if fila >= self.rowCount():
+                return None
             vueltas_de_seguridad += 1
         return None
 
