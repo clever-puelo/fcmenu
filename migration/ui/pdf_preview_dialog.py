@@ -34,7 +34,7 @@ from __future__ import annotations
 import shutil
 from pathlib import Path
 
-from PyQt6.QtCore import QSize, Qt, QTimer
+from PyQt6.QtCore import QEvent, QObject, QPoint, QSize, Qt, QTimer
 from PyQt6.QtGui import QPainter
 from PyQt6.QtPdf import QPdfDocument
 from PyQt6.QtPdfWidgets import QPdfView
@@ -46,6 +46,51 @@ from PyQt6.QtWidgets import QDialog, QFileDialog, QHBoxLayout, QLabel, QMessageB
 # porcentaje libre; alcanza para leer cómodo un comprobante en
 # cualquier tamaño de pantalla.
 PASOS_ZOOM = [0.5, 0.75, 1.0, 1.25, 1.5, 1.75, 2.0, 2.5, 3.0]
+
+
+class _VistaPdfConManito(QPdfView):
+    """`QPdfView` con pan-por-arrastre estilo "manito" — pedido del
+    usuario (2026-08-21): "aplicar la manito para mover el pdf ampliado
+    dentro de la ventana" (mismo gesto de cualquier visor de PDF real:
+    con el documento con zoom, arrastrar con el mouse para moverlo en
+    vez de depender sólo de las scrollbars).
+
+    `QPdfView` es un `QAbstractScrollArea` — no trae ningún modo "mano"
+    propio, así que se arma acá con un filtro de eventos sobre su
+    `viewport()` (los eventos de mouse de un `QAbstractScrollArea` le
+    llegan al viewport, no al widget contenedor). Cursor mano-abierta en
+    reposo, mano-cerrada mientras se arrastra — igual que Acrobat/
+    cualquier visor real."""
+
+    def __init__(self, parent: QWidget | None = None):
+        super().__init__(parent)
+        self.viewport().setCursor(Qt.CursorShape.OpenHandCursor)
+        self._arrastrando = False
+        self._pos_inicial = QPoint()
+        self._scroll_inicial = QPoint()
+        self.viewport().installEventFilter(self)
+
+    def eventFilter(self, watched: QObject, event: QEvent) -> bool:  # noqa: N802 (Qt override)
+        if watched is not self.viewport():
+            return False
+
+        tipo = event.type()
+        if tipo == QEvent.Type.MouseButtonPress and event.button() == Qt.MouseButton.LeftButton:  # type: ignore[attr-defined]
+            self._arrastrando = True
+            self._pos_inicial = event.globalPosition().toPoint()  # type: ignore[attr-defined]
+            self._scroll_inicial = QPoint(self.horizontalScrollBar().value(), self.verticalScrollBar().value())
+            self.viewport().setCursor(Qt.CursorShape.ClosedHandCursor)
+            return True
+        if tipo == QEvent.Type.MouseMove and self._arrastrando:
+            delta = event.globalPosition().toPoint() - self._pos_inicial  # type: ignore[attr-defined]
+            self.horizontalScrollBar().setValue(self._scroll_inicial.x() - delta.x())
+            self.verticalScrollBar().setValue(self._scroll_inicial.y() - delta.y())
+            return True
+        if tipo == QEvent.Type.MouseButtonRelease and self._arrastrando:
+            self._arrastrando = False
+            self.viewport().setCursor(Qt.CursorShape.OpenHandCursor)
+            return True
+        return False
 
 
 class PdfPreviewDialog(QDialog):
@@ -70,7 +115,7 @@ class PdfPreviewDialog(QDialog):
 
         layout.addLayout(self._armar_barra_zoom())
 
-        self._vista = QPdfView(self)
+        self._vista = _VistaPdfConManito(self)
         self._vista.setDocument(self._documento)
         self._vista.setPageMode(QPdfView.PageMode.MultiPage)
         self._vista.setZoomMode(QPdfView.ZoomMode.FitToWidth)

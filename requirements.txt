@@ -1,6 +1,13 @@
 SQLAlchemy>=2.0
 psycopg2-binary>=2.9
 PyQt6>=6.7
+# Navegador embebido (Chromium) para el botón "Ver en Google Earth" del
+# ABM de Clientes (migration/ui/navegador_dialog.py) — pedido del usuario
+# (2026-08-21): "un navegador básico dentro del programa", no abrir el
+# navegador externo. Pesa bastante más que el resto (~130MB, trae su
+# propio Chromium) — al empaquetar con PyInstaller hace falta el hook de
+# PyQt6-WebEngine (bundlea QtWebEngineProcess.exe + recursos/locales).
+PyQt6-WebEngine>=6.7
 # AFIP (WSAA/WSFEv1) — cliente SOAP nativo, ver migration/afip.py.
 # pyafipws NO se usa: su paquete de PyPI falla al instalar en este
 # entorno (pip rechaza el .tar.gz por un symlink que escapa del

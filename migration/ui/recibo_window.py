@@ -85,7 +85,13 @@ from .decimals import format_decimal, parse_decimal
 from .nota_cliente_dialog import NotaClienteDialog
 from .pago_dialog import TIPOS_RETENCION, PagoDialog
 from .pdf_preview_dialog import PdfPreviewDialog
-from .widgets import MontoLineEdit, compactar_alto_filas, redimensionar_pct_pantalla, texto_contacto_cliente
+from .widgets import (
+    ESTILO_PANEL_COMPACTO,
+    MontoLineEdit,
+    compactar_alto_filas,
+    redimensionar_pct_pantalla,
+    texto_contacto_cliente,
+)
 
 ETIQUETAS_TIPREG = dict(TIPOS_RETENCION)
 
@@ -156,11 +162,15 @@ class ReciboWindow(QMainWindow):
         central = QWidget()
         self.setCentralWidget(central)
         layout = QVBoxLayout(central)
-        # Líneas más juntas (feedback del usuario, 2026-08-17: "pasa lo
-        # mismo que en abm clientes, se sale de la ventana... hay que
-        # juntar mas las lineas") — antes usaba el spacing default de Qt
-        # entre las 4 secciones apiladas.
-        layout.setSpacing(6)
+        # Apretado al máximo (pedido del usuario, 2026-08-21: mismo
+        # tratamiento que ya se le dio a `FacturadorWindow` — "darle más
+        # espacio al detalle quitando de la cabecera y el pie") — el
+        # margen/espaciado entre Cabecera/Pendientes-Pagos/Pie no aporta
+        # nada, todo el aire que se le saque acá es más alto para la
+        # sección central. Antes: `setSpacing(6)` sin márgenes propios
+        # (heredaba el default de Qt).
+        layout.setContentsMargins(4, 4, 4, 4)
+        layout.setSpacing(3)
 
         layout.addWidget(self._armar_cabecera())
 
@@ -188,8 +198,15 @@ class ReciboWindow(QMainWindow):
     # ------------------------------------------------------------------
     def _armar_cabecera(self) -> QGroupBox:
         grupo = QGroupBox("Cabecera — Recibo")
+        grupo.setStyleSheet(ESTILO_PANEL_COMPACTO)
         layout = QVBoxLayout(grupo)
-        layout.setSpacing(4)
+        # Líneas más juntas (pedido del usuario, 2026-08-21: "achicar la
+        # cabecera para ganar espacio" — mismo criterio ya aplicado a
+        # `FacturadorWindow`) — el espaciado default de Qt entre las 3
+        # líneas (Cliente/Contacto/Crédito-Deuda) sumaba más aire del
+        # necesario.
+        layout.setSpacing(3)
+        layout.setContentsMargins(6, 4, 6, 4)
 
         # Código+nombre a la izquierda, botón cambiar-cliente a la
         # derecha (antes de "Notas") — pedido del usuario, 2026-08-20.
@@ -232,7 +249,9 @@ class ReciboWindow(QMainWindow):
     # ------------------------------------------------------------------
     def _armar_pendientes(self) -> QGroupBox:
         grupo = QGroupBox("Pendientes de Cobro — clic alterna Aplicado, doble clic edita Aplicado/Descuento")
+        grupo.setStyleSheet(ESTILO_PANEL_COMPACTO)
         layout = QVBoxLayout(grupo)
+        layout.setContentsMargins(4, 4, 4, 2)
 
         self.tabla_pendientes = QTableWidget(0, len(COLUMNAS_PENDIENTES))
         self.tabla_pendientes.setHorizontalHeaderLabels(COLUMNAS_PENDIENTES)
@@ -274,7 +293,9 @@ class ReciboWindow(QMainWindow):
         # tabla ya no tiene techo de alto fijo, crece para ocupar todo
         # el panel, a la par de Pendientes.
         grupo = QGroupBox("Pagos")
+        grupo.setStyleSheet(ESTILO_PANEL_COMPACTO)
         layout = QVBoxLayout(grupo)
+        layout.setContentsMargins(4, 4, 4, 2)
 
         # Ancho acorde a la cantidad de dígitos que va a alojar (feedback
         # del usuario, 2026-08-19: antes tenía `stretch=1` y quedaba
@@ -316,8 +337,12 @@ class ReciboWindow(QMainWindow):
     # ------------------------------------------------------------------
     def _armar_pie(self) -> QGroupBox:
         grupo = QGroupBox("Totales")
+        grupo.setStyleSheet(ESTILO_PANEL_COMPACTO)
         layout = QVBoxLayout(grupo)
-        layout.setSpacing(4)
+        # Apretado (pedido del usuario, 2026-08-21: "quitar espacio del
+        # pie" — mismo criterio ya aplicado a `FacturadorWindow`).
+        layout.setSpacing(2)
+        layout.setContentsMargins(6, 2, 6, 2)
 
         fila1 = QHBoxLayout()
         fila1.addWidget(QLabel("Deuda Total:"))

@@ -73,7 +73,7 @@ from typing import TYPE_CHECKING, Any, Optional
 if TYPE_CHECKING:
     from migration.models import Cliente
 
-from PyQt6.QtCore import QDate, QEvent, QObject, Qt, QTimer
+from PyQt6.QtCore import QDate, QEvent, QObject, QSize, Qt, QTimer
 from PyQt6.QtGui import QGuiApplication, QKeyEvent
 from PyQt6.QtWidgets import (
     QAbstractItemView,
@@ -87,11 +87,14 @@ from PyQt6.QtWidgets import (
     QSpinBox,
     QTableWidget,
     QTableWidgetItem,
+    QToolButton,
     QVBoxLayout,
     QWidget,
 )
 
 from .decimals import format_decimal, parse_decimal
+from .iconos import icono
+from .theme import Verde, aplicar_sombra_boton, estilo_boton_3d
 
 
 def redimensionar_pct_pantalla(ventana: QWidget, ancho_pct: float, alto_pct: float) -> None:
@@ -124,6 +127,19 @@ def mm_a_px(mm: float) -> int:
     impresión (mismo criterio ya usado en `main_menu_window.py` para el
     margen de Listados dentro del panel MDI)."""
     return round(mm * PX_POR_MM)
+
+
+# Override puntual de `QGroupBox` (sólo para quien lo pase explícito, no
+# el QSS global de `theme.py`) del margen/padding de chrome del recuadro
+# — pedido del usuario (2026-08-21, primero en `FacturadorWindow`, mismo
+# criterio reaplicado a `ReciboWindow`): "comprimir más la Cabecera, el
+# pie... para ganar espacio" en la sección central (Detalle/Pendientes).
+# Sólo pisa `margin-top`/`padding` (Qt cascada por propiedad: lo que no
+# se redefine acá sigue saliendo del QSS global — borde, color de fondo,
+# etc.). Movido acá (antes vivía sólo en `facturador_window.py`) para
+# que cualquier ventana con el mismo patrón Cabecera/Detalle/Pie lo
+# reuse sin duplicar el string.
+ESTILO_PANEL_COMPACTO = "QGroupBox { margin-top: 6px; padding: 4px 6px 3px 6px; }"
 
 
 def compactar_alto_filas(tabla: QTableWidget, pct: float = 90) -> None:
@@ -264,6 +280,114 @@ def crear_boton_hoy(campo: QDateEdit) -> QPushButton:
     boton.setMaximumWidth(50)
     boton.clicked.connect(lambda: campo.setDate(QDate.currentDate()))
     return boton
+
+
+class BotonIconoTexto(QToolButton):
+    """`QToolButton` con el ícono FIJO al extremo izquierdo y el texto
+    CENTRADO en el espacio libre restante, envuelto solo a las líneas que
+    haga falta (2 o 3) si no entra en una — pedido del usuario
+    (2026-08-21): "el icono al extremo izquierdo y el texto centrado en
+    el espacio libre... si es muy largo en 2 o 3 lineas", para todo botón
+    de la app que tenga ícono.
+
+    `ToolButtonTextBesideIcon` nativo de Qt centra ícono+texto COMO UN
+    BLOQUE ÚNICO (los dos se mueven juntos al centro del botón) — no hay
+    bandera nativa para separarlos. Acá se arma con un layout propio en
+    vez de `setText()`/`setIcon()` (que quedan sin usar A PROPÓSITO): el
+    `QToolButton` de base sólo pinta fondo/borde/hover/pressed vía QSS
+    (heredado del estilo que le pase cada pantalla), el ícono y el texto
+    los pintan 2 `QLabel` hijos encima — con `WA_TransparentForMouseEvents`
+    para que el clic les pase de largo hacia el botón real.
+
+    `color_texto_marcado` es sólo para botones `setCheckable(True)` con
+    un `:checked` en su QSS que cambia el texto a otro color (ej. el
+    panel lateral de `MainMenuWindow`, blanco al seleccionar la sección)
+    — sin esto el `QLabel` de texto quedaría siempre con `color_texto`,
+    ya que no hereda el pseudo-estado `:checked` del botón contenedor.
+
+    **Trae un cromado DEFAULT** (mismo verde/blanco/negrita que el QSS
+    global de `QPushButton`, ver `theme.py: aplicar_tema`) — bug real
+    reportado por el usuario (2026-08-21, "el botón de mapa está
+    deformado"): `QToolButton` NO es subclase de `QPushButton` en Qt, así
+    que ese QSS global NUNCA lo alcanza — el único llamador que no le
+    pasaba su propio `setStyleSheet()` (el botón "Ver en el Mapa" de la
+    ficha de Cliente) quedaba con el cromado NATIVO de Qt, sin relación
+    de tamaño/color con sus hermanos `QPushButton` de la misma barra.
+    Cualquier llamador puede pisar este default con su propio
+    `setStyleSheet()`/`color_texto` después (ya lo hacen la barra de
+    tareas, el panel lateral y "Salir", cada uno con su paleta puntual)."""
+
+    def __init__(
+        self,
+        clave_icono: str,
+        texto: str,
+        tamano_icono: int = 40,
+        color_texto: str = Verde.BLANCO,
+        color_texto_marcado: str = "",
+        parent: QWidget | None = None,
+    ):
+        super().__init__(parent)
+
+        # Apariencia tridimensional default (gradiente + bisel + sombra
+        # real, pedido del usuario 2026-08-21) — mismo generador que usa
+        # el QSS global de `QPushButton` (`theme.py: estilo_boton_3d`),
+        # así que cualquier `BotonIconoTexto` sin estilo propio sale ya
+        # "elevado" en vez de plano. La sombra la instala acá a mano
+        # (`aplicar_sombra_boton`) porque `QToolButton` NO se parchea
+        # globalmente como `QPushButton` (`_instalar_sombra_botones`,
+        # ver su docstring: hay `QToolButton` internos de Qt — ej. la "x"
+        # de cerrar pestaña — donde una sombra se ve mal; acá es siempre
+        # un botón "de verdad").
+        self.setStyleSheet(estilo_boton_3d("QToolButton", Verde.MEDIO, Verde.BLANCO))
+        aplicar_sombra_boton(self)
+
+        layout = QHBoxLayout(self)
+        layout.setContentsMargins(8, 2, 10, 2)
+        layout.setSpacing(8)
+
+        self._lbl_icono = QLabel()
+        self._lbl_icono.setPixmap(icono(clave_icono, tamano_icono).pixmap(tamano_icono, tamano_icono))
+        self._lbl_icono.setFixedSize(tamano_icono, tamano_icono)
+        self._lbl_icono.setAttribute(Qt.WidgetAttribute.WA_TransparentForMouseEvents)
+        layout.addWidget(self._lbl_icono, 0, Qt.AlignmentFlag.AlignVCenter)
+
+        self._lbl_texto = QLabel(texto)
+        self._lbl_texto.setWordWrap(True)
+        self._lbl_texto.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        self._lbl_texto.setAttribute(Qt.WidgetAttribute.WA_TransparentForMouseEvents)
+        layout.addWidget(self._lbl_texto, 1)
+
+        self._color_texto = color_texto
+        self._color_texto_marcado = color_texto_marcado
+        if color_texto:
+            self._aplicar_color_texto(marcado=False)
+        if color_texto_marcado:
+            self.toggled.connect(lambda marcado: self._aplicar_color_texto(marcado))
+
+    def _aplicar_color_texto(self, marcado: bool) -> None:
+        color = self._color_texto_marcado if (marcado and self._color_texto_marcado) else self._color_texto
+        if color:
+            self._lbl_texto.setStyleSheet(f"color: {color}; background: transparent; border: none;")
+
+    def set_texto(self, texto: str) -> None:
+        self._lbl_texto.setText(texto)
+
+    def sizeHint(self) -> QSize:  # noqa: N802 (Qt override)
+        # `QToolButton.sizeHint()` nativo lo calcula en base a `icon()`/
+        # `text()` PROPIOS — que acá quedan siempre vacíos a propósito
+        # (ver docstring de la clase, el ícono/texto reales los pintan
+        # los `QLabel` hijos) — sin este override devuelve el tamaño
+        # mínimo de un botón VACÍO, mucho más chico que el contenido real
+        # (bug real reportado por el usuario, 2026-08-21: "el botón de
+        # mapa está deformado"/"el botón cerrar... está roto" — CUALQUIER
+        # llamador que no fije su propio tamaño fijo explícito, como sí
+        # hacían la barra de tareas/sidebar, quedaba con un botón
+        # demasiado chico para su propio ícono, recortándolo). Devuelve
+        # el tamaño real del layout interno.
+        return self.layout().sizeHint()
+
+    def minimumSizeHint(self) -> QSize:  # noqa: N802 (Qt override)
+        return self.layout().minimumSize()
 
 
 class UpperCaseLineEdit(QLineEdit):

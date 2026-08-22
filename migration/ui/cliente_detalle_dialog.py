@@ -32,8 +32,6 @@ from __future__ import annotations
 from typing import Callable, Optional
 from urllib.parse import quote
 
-from PyQt6.QtCore import QUrl
-from PyQt6.QtGui import QDesktopServices
 from PyQt6.QtWidgets import (
     QCheckBox,
     QComboBox,
@@ -56,10 +54,10 @@ from migration.services import ClienteService
 
 from .decimals import parse_decimal
 from .dtos_cliente_dialog import DtosClienteDialog
-from .iconos import icono
+from .navegador_dialog import NavegadorDialog
 from .nota_cliente_dialog import NotaClienteDialog
 from .validators import cuit_valido, email_valido
-from .widgets import EnterAsTabFilter, LowerCaseLineEdit, UpperCaseLineEdit
+from .widgets import BotonIconoTexto, EnterAsTabFilter, LowerCaseLineEdit, UpperCaseLineEdit
 
 CIVA_OPCIONES = [
     (1, "Inscripto"),
@@ -160,21 +158,8 @@ class ClienteDetalleDialog(QDialog):
 
         self.txt_dir = UpperCaseLineEdit()
         self.txt_dir.setMaxLength(50)
-        # Achicado + botón "ver en el mapa" a la derecha (pedido del
-        # usuario, 2026-08-21) — abre Google Maps en el navegador con
-        # la Dirección + Localidad + Provincia ya cargadas, para no
-        # tener que buscarla a mano.
         self.txt_dir.setMaximumWidth(260)
-        fila_dir = QHBoxLayout()
-        fila_dir.addWidget(self.txt_dir)
-        self.btn_mapa = QPushButton()
-        self.btn_mapa.setIcon(icono("mapa", 22))
-        self.btn_mapa.setToolTip("Ver la Dirección en Google Maps")
-        self.btn_mapa.setMaximumWidth(36)
-        self.btn_mapa.clicked.connect(self._abrir_mapa)
-        fila_dir.addWidget(self.btn_mapa)
-        fila_dir.addStretch()
-        form.addRow("Dirección :", fila_dir)
+        form.addRow("Dirección :", self.txt_dir)
 
         self.txt_loc = UpperCaseLineEdit()
         self.txt_loc.setMaxLength(50)
@@ -304,6 +289,31 @@ class ClienteDetalleDialog(QDialog):
         self.btn_notas.clicked.connect(self._on_notas)
         fila.addWidget(self.btn_notas)
 
+        # "Ver en el Mapa" — mismo criterio que "Notas": habilitado sólo
+        # con un cliente ya existente (Alta/Cambio todavía no tienen una
+        # Dirección confirmada en la base), sin importar si la ficha está
+        # en modo Sólo-Ver o Cambio (pedido del usuario, 2026-08-21:
+        # "quede disponible si el cliente existe"). Antes vivía DENTRO
+        # de `frame_nominales`, que se deshabilita entero en modo
+        # Sólo-Ver — bug real: quedaba inutilizable justo en el caso más
+        # común (ver un cliente ya cargado).
+        #
+        # Google MAPS, no Earth (bug real reportado por el usuario,
+        # 2026-08-21, segunda vuelta): Earth es una SPA pesada (Flutter +
+        # WebGL/WebGPU) que tiraba errores de consola y no andaba bien
+        # embebida — Maps en modo `embed` alcanza de sobra para el
+        # objetivo real ("ver la ubicación") y es mucho más liviano, ver
+        # `_abrir_mapa`.
+        #
+        # Ícono al extremo izquierdo, texto centrado (`BotonIconoTexto`,
+        # pedido del usuario, 2026-08-21) — mismo criterio que se aplicó
+        # ahora a todo botón de la app que tenga ícono.
+        self.btn_mapa = BotonIconoTexto("mapa", "Ver en el Mapa", tamano_icono=22)
+        self.btn_mapa.setToolTip("Ver la Dirección en el Mapa")
+        self.btn_mapa.setEnabled(False)
+        self.btn_mapa.clicked.connect(self._abrir_mapa)
+        fila.addWidget(self.btn_mapa)
+
         self.btn_guardar = QPushButton("Grabar")
         self.btn_guardar.clicked.connect(self._on_guardar)
         fila.addWidget(self.btn_guardar)
@@ -355,6 +365,7 @@ class ClienteDetalleDialog(QDialog):
         self.btn_editar.setText("Sólo Ver" if modo == "editar" else "Cambio")
         self.btn_baja.setEnabled(modo == "ver")
         self.btn_notas.setEnabled(self.cliente_actual is not None)
+        self.btn_mapa.setEnabled(self.cliente_actual is not None)
         # Oculto (no sólo deshabilitado) durante el Alta — "aparezca
         # cuando el cliente ya esta dado de alta" (feedback del usuario,
         # 2026-08-17).
@@ -426,6 +437,28 @@ class ClienteDetalleDialog(QDialog):
             self._on_notas()
 
     def _abrir_mapa(self) -> None:
+        """Abre la Dirección del cliente en Google Maps, EMBEBIDO dentro
+        de la propia app (`NavegadorDialog`, `QWebEngineView`) — pedido
+        del usuario (2026-08-21): "no vaya al navegador".
+
+        Google MAPS en modo `output=embed` (NO Earth, NO la página
+        normal de búsqueda de Maps): segunda vuelta sobre este mismo
+        botón, bug real reportado por el usuario — primero apuntaba a
+        Google Earth (globo 3D, Flutter + WebGL/WebGPU), que tiraba
+        errores de consola y no andaba bien embebida en el Chromium de
+        QtWebEngine (sin aceleración GPU completa). `embed` es la vista
+        liviana pensada justamente para insertar un mapa DENTRO de otra
+        página (sin la UI/JS pesado de la app completa de Maps) — sólo
+        el mapa 2D con un pin en la dirección buscada, que es exactamente
+        el objetivo real acá ("ver la ubicación en el mapa").
+
+        **Tercera vuelta, bug real reportado por el usuario**: navegar
+        `output=embed` DIRECTO (`vista.load()`) no mostraba nada —
+        "The google maps embed API must be used in an iframe". La propia
+        página de Google chequea en JS que corra DENTRO de un `<iframe>`
+        (nunca como documento de nivel superior) y si no, rechaza en vez
+        de dibujar el mapa. Se arma acá un HTML envoltorio mínimo con el
+        mapa DENTRO de un iframe de verdad (`NavegadorDialog(html=...)`)."""
         partes = [self.txt_dir.text().strip(), self.txt_loc.text().strip()]
         pcia = self.txt_pcia.text().strip()
         if pcia:
@@ -434,8 +467,15 @@ class ClienteDetalleDialog(QDialog):
         if not direccion:
             QMessageBox.information(self, "Mapa", "Cargá la Dirección primero.")
             return
-        url = f"https://www.google.com/maps/search/?api=1&query={quote(direccion)}"
-        QDesktopServices.openUrl(QUrl(url))
+        url = f"https://www.google.com/maps?q={quote(direccion)}&output=embed"
+        html = (
+            "<html><body style='margin:0;padding:0'>"
+            f'<iframe src="{url}" style="border:0;width:100%;height:100%" '
+            'allowfullscreen loading="lazy"></iframe>'
+            "</body></html>"
+        )
+        dialogo = NavegadorDialog(url, f"Mapa - {direccion}", html=html, parent=self)
+        dialogo.exec()
 
     def _on_notas(self) -> None:
         if self.cliente_actual is None:

@@ -128,14 +128,26 @@ class _EstadoFila:
 class _DelegadoNumerico(QStyledItemDelegate):
     """Filtra el editor de las columnas numéricas (`COLUMNAS_NUMERICAS`
     — cantidades y Precio Unit.) para que sólo dejen tipear dígitos y
-    una coma decimal, mismo criterio que `MontoLineEdit`/`EnteroLineEdit`
-    (`widgets.py`) para el resto de la app — pedido del usuario
-    (2026-08-21): "no debe permitir ingresar letras en las cantidades".
-    El editor default de `QTableWidget` es un `QLineEdit` sin ninguna
-    restricción; acá se le agrega un validador recién al crearlo, sin
-    tocar el resto del comportamiento de edición de la grilla."""
+    UN separador decimal, mismo criterio que `MontoLineEdit`/
+    `EnteroLineEdit` (`widgets.py`) para el resto de la app — pedido del
+    usuario (2026-08-15): "no debe permitir ingresar letras en las
+    cantidades". El editor default de `QTableWidget` es un `QLineEdit`
+    sin ninguna restricción; acá se le agrega un validador recién al
+    crearlo, sin tocar el resto del comportamiento de edición de la
+    grilla.
 
-    _VALIDADOR = QRegularExpressionValidator(QRegularExpression(r"[0-9]*,?[0-9]*"))
+    Acepta "," O "." como separador decimal — bug real reportado por el
+    usuario (2026-08-21, Precio Unit.): "no permite decimales en
+    precio". El validador sólo dejaba pasar coma; en varios teclados
+    numéricos (numpad) la tecla de decimal manda un PUNTO, no una coma
+    (depende de la configuración regional de Windows de cada PC, no del
+    layout que "debería" tener) — la tecla quedaba bloqueada del todo, el
+    operador no podía cargar ningún decimal. `parse_decimal()`
+    (`migration/decimals.py`) ya interpreta un punto como separador
+    decimal cuando el texto no tiene ninguna coma, así que ensanchar acá
+    el validador no rompe nada río abajo."""
+
+    _VALIDADOR = QRegularExpressionValidator(QRegularExpression(r"[0-9]*[.,]?[0-9]*"))
 
     def createEditor(self, parent, option, index):  # noqa: N802 (Qt override)
         editor = super().createEditor(parent, option, index)
@@ -509,13 +521,25 @@ class DetalleGrid(QTableWidget):
 
         self._recalcular_fila(fila)
 
-    def _recalcular_fila(self, fila: int) -> None:
+    def _recalcular_fila(self, fila: int, *, avisar_si_falta: bool = False) -> None:
         """Recalcula sólo el Importe — el Precio Unitario NUNCA se toca
         acá (pedido del usuario, 2026-08-21: "deje el precio unitario
         del archivo sin modificar... muestre siempre el de la lista o
         el que cargó el operador"). Siempre lee el precio TAL COMO ESTÁ
         en la celda en este momento (de lista, recién resuelto el
-        Artículo, o editado a mano) — ver `calcular_importe`."""
+        Artículo, o editado a mano) — ver `calcular_importe`.
+
+        `avisar_si_falta`: si no se puede calcular el Importe porque
+        falta cargar alguna cantidad, avisa CUÁL falta en vez de dejar
+        el Importe en blanco sin explicación — bug real reportado por el
+        usuario (2026-08-21): "cuando carga el precio unitario ya debe
+        tener los datos para calcular el precio, sino avise (ej. falta
+        la cant. en sección A)". Sólo `True` desde `_on_precio_editado`
+        (el momento real en que el operador espera que YA se pueda
+        calcular) — en el resto de los llamadores (mientras se completan
+        los segmentos de código/cantidad en su orden normal) el Importe
+        todavía no tiene por qué estar completo, avisar ahí sería
+        prematuro y molesto."""
         estado = self._estado.get(fila)
         if estado is None or estado.seccion is None:
             return
@@ -530,6 +554,18 @@ class DetalleGrid(QTableWidget):
         try:
             importe = calcular_importe(precio_actual, valores_cantidad, estado.seccion)
         except (ValueError, SeccionSinUnidadFacturacionError):
+            if avisar_si_falta:
+                faltante = next(
+                    (s for s in estado.seccion.segmentos_cantidad if valores_cantidad.get(s.alf_index, Decimal(0)) == 0),
+                    None,
+                )
+                etiqueta = faltante.etiqueta if faltante is not None else "una cantidad"
+                QMessageBox.warning(
+                    self,
+                    "Detalle",
+                    f'Falta cargar "{etiqueta}" en la Sección {estado.seccion.cod_seccion} '
+                    "para poder calcular el Importe.",
+                )
             self._actualizando = True
             try:
                 self._set_texto(fila, COL_IMPORTE, "")
@@ -544,25 +580,53 @@ class DetalleGrid(QTableWidget):
             self._actualizando = False
 
     def _on_precio_editado(self, fila: int) -> None:
-        """Dispara el aviso de desvío ±20% (si corresponde — hay
-        precio de lista contra qué comparar, no es ítem libre) y
-        recalcula el Importe con el precio nuevo. "Al final del
-        ingreso" (no en cada tecla): se llama recién cuando la celda de
-        Precio se CIERRA (Enter/Tab), mismo punto que dispara cualquier
-        otro recálculo de la grilla."""
+        """Recalcula el Importe con el precio nuevo (avisando si falta
+        alguna cantidad, ver `_recalcular_fila`) y dispara el aviso de
+        desvío ±20% (si corresponde — hay precio de lista contra qué
+        comparar, no es ítem libre). "Al final del ingreso" (no en cada
+        tecla): se llama recién cuando la celda de Precio se CIERRA
+        (Enter/Tab), mismo punto que dispara cualquier otro recálculo de
+        la grilla.
+
+        **Bug real encontrado con teclado real (2026-08-21, "a veces
+        pasa al renglón siguiente y a veces no" tras cargar el Precio)**:
+        el aviso ±20% es un `QMessageBox.warning()` MODAL, mostrado
+        SÍNCRONO desde acá — pero acá mismo corre DIFERIDO por
+        `QTimer.singleShot(0, ...)` (ver `_on_item_changed`), en la MISMA
+        vuelta de evento en que Qt todavía tiene encolado (también
+        diferido, encolado justo DESPUÉS) el callback que avanza al
+        próximo renglón (`_despues_de_cerrar_editor`, disparado por
+        `closeEditor()`). Un diálogo modal abierto acá pumpea el loop de
+        eventos — y ESE segundo callback, todavía pendiente, terminaba
+        corriendo DENTRO del loop anidado del propio modal (antes de que
+        el operador llegara a cerrarlo), abriendo el editor del renglón
+        siguiente TAPADO por el modal; al cerrar el modal, ese editor
+        quedaba en un estado inconsistente (a veces "pegado" sin foco
+        real) — de ahí el "a veces sí, a veces no": dependía pura y
+        exclusivamente de si ESTE aviso llegaba a mostrarse (desvío
+        >20%) o no. Difiriendo el propio `QMessageBox.warning()` acá
+        (en vez de mostrarlo síncrono) se deja que el callback de avance
+        ya encolado corra PRIMERO, limpio, sin ningún modal de por
+        medio — el aviso de desvío queda para el final, ya con el foco
+        en el renglón siguiente (no cambia su utilidad, es sólo
+        informativo)."""
+        self._recalcular_fila(fila, avisar_si_falta=True)
+
         estado = self._estado.get(fila)
         if estado is not None and estado.precio_lista:
             precio_actual = parse_decimal(self._texto(fila, COL_PRECIO))
             diferencia = precio_actual - estado.precio_lista
             if abs(diferencia) > estado.precio_lista * DESVIO_PRECIO_MAXIMO:
                 direccion = "por ENCIMA" if diferencia > 0 else "por DEBAJO"
-                QMessageBox.warning(
-                    self,
-                    "Detalle",
-                    f"El precio tipeado (${format_decimal(precio_actual)}) está {direccion} en más "
-                    f"de un 20% del precio de lista (${format_decimal(estado.precio_lista)}).",
+                QTimer.singleShot(
+                    0,
+                    lambda: QMessageBox.warning(
+                        self,
+                        "Detalle",
+                        f"El precio tipeado (${format_decimal(precio_actual)}) está {direccion} en más "
+                        f"de un 20% del precio de lista (${format_decimal(estado.precio_lista)}).",
+                    ),
                 )
-        self._recalcular_fila(fila)
 
     # ------------------------------------------------------------------
     # Selector de Artículo (F2 / Enter en Sección vacía / código completo)

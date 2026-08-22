@@ -36,8 +36,8 @@ from __future__ import annotations
 from datetime import date, datetime
 from pathlib import Path
 
-from PyQt6.QtCore import QSize, Qt, QTimer, QUrl
-from PyQt6.QtGui import QDesktopServices, QFont, QFontMetrics
+from PyQt6.QtCore import Qt, QTimer, QUrl
+from PyQt6.QtGui import QDesktopServices
 from PyQt6.QtWidgets import (
     QButtonGroup,
     QDialog,
@@ -47,7 +47,6 @@ from PyQt6.QtWidgets import (
     QMdiArea,
     QMdiSubWindow,
     QMessageBox,
-    QPushButton,
     QSizePolicy,
     QToolButton,
     QVBoxLayout,
@@ -62,7 +61,8 @@ from migration.repository import RepositoryFactory
 
 from .estado_conexion import MonitorInternet
 from .iconos import icono
-from .theme import Verde, icono_app, logo_empresa
+from .theme import Verde, estilo_boton_3d, icono_app, logo_empresa
+from .widgets import BotonIconoTexto
 
 VERSION_APP = "2.0.0"
 INTERVALO_RELOJ_MS = 1_000
@@ -87,10 +87,7 @@ ALTO_BARRA_TAREAS_2_FILAS = 2 * (ALTO_BARRA_TAREAS - 12) + 10
 # cantidad, evita que esto se repita cada vez que cambie el tamaño de
 # ícono/fuente.
 ANCHO_MINIMO_BOTON_TAREA = 150
-# Ícono real de los botones de la barra de tareas (`_crear_boton_tarea`)
-# — reusado acá para que `_envolver_en_dos_lineas()` descuente el ancho
-# correcto (bug real, 2026-08-20: quedó un "34" hardcodeado, calibrado
-# para el ícono viejo de 22px, que ya no alcanzaba tras agrandarlo).
+# Ícono real de los botones de la barra de tareas (`_crear_boton_tarea`).
 ANCHO_ICONO_TAREA = 40
 
 # Posicionamiento de subventanas del MDI (feedback del usuario,
@@ -158,39 +155,6 @@ PCT_MDI_POR_CLASE: dict[str, tuple[float, float]] = {
 MAXIMIZAR_AL_ABRIR_MDI: frozenset[str] = frozenset(
     {"FacturadorWindow", "ReciboWindow", "CtaCteWindow", "FacturasEmitidasWindow"}
 )
-
-
-def _envolver_en_dos_lineas(texto: str, fuente: QFont, ancho_disponible: int) -> str:
-    """Si `texto` no entra en una línea dentro de `ancho_disponible`
-    (según `fuente`), lo parte en 2 líneas por la palabra más cercana a
-    la mitad — pedido del usuario (2026-08-16): botones de tamaño
-    uniforme en la barra de tareas, "achicar el texto o colocarlo en 2
-    líneas" en vez de agrandar el botón o mostrar scroll."""
-    metrica = QFontMetrics(fuente)
-    # Descuenta ícono (40px, `ANCHO_ICONO_TAREA`) + padding/borde/espaciado
-    # ícono-texto real del QSS del botón (`padding: 2px 8px` + `border:
-    # 1px` + separación nativa de Qt entre ícono y texto, ~6px) — antes
-    # era un "34" fijo calibrado para el ícono viejo de 22px (bug real,
-    # 2026-08-20: quedó corto al agrandarlo, dejaba de envolver texto
-    # largo que ya no entraba en una línea).
-    ancho_libre = max(ancho_disponible - (ANCHO_ICONO_TAREA + 20), 40)
-    if metrica.horizontalAdvance(texto) <= ancho_libre:
-        return texto
-
-    palabras = texto.split(" ")
-    if len(palabras) < 2:
-        return texto
-
-    mejor_corte = 1
-    mejor_diferencia = None
-    for i in range(1, len(palabras)):
-        linea1 = " ".join(palabras[:i])
-        linea2 = " ".join(palabras[i:])
-        diferencia = abs(metrica.horizontalAdvance(linea1) - metrica.horizontalAdvance(linea2))
-        if mejor_diferencia is None or diferencia < mejor_diferencia:
-            mejor_diferencia = diferencia
-            mejor_corte = i
-    return " ".join(palabras[:mejor_corte]) + "\n" + " ".join(palabras[mejor_corte:])
 
 
 class MainMenuWindow(QMainWindow):
@@ -369,17 +333,20 @@ class MainMenuWindow(QMainWindow):
         self._botones_sidebar: dict[str, QToolButton] = {}
 
         for clave_icono, etiqueta, nombre_seccion in self._BOTONES_SIDEBAR:
-            boton = QToolButton()
-            boton.setText(etiqueta)
-            # Íconos al doble (pedido del usuario, 2026-08-20): 26->48px —
-            # el mínimo de 68px del botón (línea de abajo) ya absorbe el
-            # crecimiento sin que el botón cambie de tamaño.
-            boton.setIcon(icono(clave_icono, 48))
-            boton.setIconSize(QSize(48, 48))
-            # Ícono a la izquierda, texto a la derecha, en una sola línea
-            # (feedback del usuario, 2026-08-16 — antes el ícono quedaba
-            # arriba del texto).
-            boton.setToolButtonStyle(Qt.ToolButtonStyle.ToolButtonTextBesideIcon)
+            # Ícono al extremo izquierdo, texto centrado en el espacio
+            # libre (`BotonIconoTexto`, pedido del usuario, 2026-08-21) —
+            # `color_texto_marcado` reproduce el texto en blanco que ya
+            # tenía el `:checked` nativo al seleccionar la sección.
+            boton = BotonIconoTexto(
+                clave_icono,
+                etiqueta,
+                # Íconos al doble (pedido del usuario, 2026-08-20): 26->48px
+                # — el mínimo de 68px del botón (línea de abajo) ya absorbe
+                # el crecimiento sin que el botón cambie de tamaño.
+                tamano_icono=48,
+                color_texto=Verde.OSCURO,
+                color_texto_marcado=Verde.BLANCO,
+            )
             boton.setCheckable(True)
             # 30% más altos que el original (52px) — pedido del usuario,
             # 2026-08-17.
@@ -396,24 +363,24 @@ class MainMenuWindow(QMainWindow):
 
     @staticmethod
     def _estilo_boton_sidebar() -> str:
+        # Sin `color` propio en el bloque base: ya no hay texto/ícono
+        # nativos (`BotonIconoTexto` los reemplaza por su propio layout)
+        # — el color del texto lo maneja `color_texto`/`color_texto_
+        # marcado` (ver `_armar_sidebar`). Apariencia 3D vía
+        # `estilo_boton_3d()` (pedido del usuario, 2026-08-21) — el
+        # ":checked" (sección seleccionada) queda con el MISMO bisel
+        # invertido que ":pressed" (permanentemente "hundido" mientras
+        # esa sección esté activa, con el verde MEDIO de la escala en vez
+        # de derivarlo — la app ya tiene esos tonos con nombre, no hace
+        # falta generarlos de nuevo).
         v = Verde
-        return f"""
-        QToolButton {{
-            background-color: {v.PASTEL};
-            color: {v.OSCURO};
-            border: 1px solid {v.MEDIO_CLARO};
-            border-radius: 10px;
-            font-weight: bold;
-            padding: 4px 4px 4px 14px;
-            text-align: left;
-        }}
-        QToolButton:hover {{
-            background-color: {v.MEDIO_CLARO};
-        }}
+        return estilo_boton_3d("QToolButton", v.PASTEL, radio=10) + f"""
         QToolButton:checked {{
-            background-color: {v.MEDIO};
-            color: {v.BLANCO};
-            border: 1px solid {v.OSCURO};
+            background: qlineargradient(x1:0, y1:0, x2:0, y2:1, stop:0 {v.MEDIO_OSCURO}, stop:1 {v.MEDIO_CLARO});
+            border-top: 2px solid {v.OSCURO};
+            border-left: 2px solid {v.OSCURO};
+            border-bottom: 1px solid {v.MEDIO_CLARO};
+            border-right: 1px solid {v.MEDIO_CLARO};
         }}
         """
 
@@ -524,56 +491,36 @@ class MainMenuWindow(QMainWindow):
             ALTO_BARRA_TAREAS_2_FILAS if dos_filas else ALTO_BARRA_TAREAS
         )
 
-        # "Calcular espacio para 8 botones y que sean proporcionales para
-        # que no aparezca el scroll horizontal" (feedback del usuario,
-        # 2026-08-16): el ancho de referencia (para decidir tipografía y
-        # si el texto necesita 2 líneas) se calcula sobre el caso más
-        # angosto REAL (8 o más si hay más botones que eso en la fila más
-        # larga) — así el tamaño de letra queda consistente entre
-        # secciones aunque una tenga menos botones (esos quedan más
-        # anchos, "proporcionales" al espacio real disponible).
-        ancho_referencia = ancho_disponible // max(len(items_fila1), len(items_fila2), 8)
         for clave_icono, etiqueta, callback in items_fila1:
-            boton = self._crear_boton_tarea(clave_icono, etiqueta, callback, ancho_referencia)
+            boton = self._crear_boton_tarea(clave_icono, etiqueta, callback)
             self.layout_barra_tareas.addWidget(boton, stretch=1)
         for clave_icono, etiqueta, callback in items_fila2:
-            boton = self._crear_boton_tarea(clave_icono, etiqueta, callback, ancho_referencia)
+            boton = self._crear_boton_tarea(clave_icono, etiqueta, callback)
             self.layout_barra_tareas_2.addWidget(boton, stretch=1)
 
-    def _crear_boton_tarea(self, clave_icono: str, etiqueta: str, callback, ancho_referencia: int) -> QToolButton:
-        boton = QToolButton()
-        boton.setText(_envolver_en_dos_lineas(etiqueta, boton.font(), ancho_referencia))
-        # Íconos casi al doble (pedido del usuario, 2026-08-20): 22->40px —
-        # el alto fijo del botón (52px, ver `ALTO_BARRA_TAREAS`) no cambia,
-        # sigue entrando con margen (padding+borde ~6px por lado).
-        boton.setIcon(icono(clave_icono, ANCHO_ICONO_TAREA))
-        boton.setIconSize(QSize(ANCHO_ICONO_TAREA, ANCHO_ICONO_TAREA))
-        boton.setToolButtonStyle(Qt.ToolButtonStyle.ToolButtonTextBesideIcon)
+    def _crear_boton_tarea(self, clave_icono: str, etiqueta: str, callback) -> QToolButton:
+        # Ícono al extremo izquierdo, texto centrado en el espacio libre
+        # (envuelto solo a 2-3 líneas si hace falta) — `BotonIconoTexto`,
+        # ver su docstring (pedido del usuario, 2026-08-21). Reemplaza al
+        # viejo `ToolButtonTextBesideIcon` nativo (centraba ícono+texto
+        # juntos como un bloque) + el corte manual a 2 líneas
+        # (`_envolver_en_dos_lineas`, ya no hace falta: el `QLabel` de
+        # `BotonIconoTexto` envuelve solo según el ancho real que le toca).
+        boton = BotonIconoTexto(
+            clave_icono,
+            etiqueta,
+            # Íconos casi al doble (pedido del usuario, 2026-08-20): 22->40px
+            # — el alto fijo del botón (52px, ver `ALTO_BARRA_TAREAS`) no
+            # cambia, sigue entrando con margen (padding+borde ~6px/lado).
+            tamano_icono=ANCHO_ICONO_TAREA,
+            color_texto=Verde.OSCURO if callback is not None else Verde.TEXTO_SUAVE,
+        )
         boton.setFixedHeight(ALTO_BARRA_TAREAS - 12)
         boton.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Fixed)
+        # Apariencia 3D (pedido del usuario, 2026-08-21) — mismo
+        # generador que el resto de los botones de la app.
         boton.setStyleSheet(
-            f"""
-            QToolButton {{
-                background-color: {Verde.BLANCO};
-                color: {Verde.OSCURO};
-                border: 1px solid {Verde.MEDIO_CLARO};
-                border-radius: 6px;
-                font-weight: bold;
-                font-size: 8.3pt;
-                padding: 2px 8px;
-            }}
-            QToolButton:hover {{
-                background-color: {Verde.MEDIO_CLARO};
-            }}
-            QToolButton:pressed {{
-                background-color: {Verde.MEDIO};
-                color: {Verde.BLANCO};
-            }}
-            QToolButton:disabled {{
-                background-color: {Verde.MUY_CLARO};
-                color: {Verde.TEXTO_SUAVE};
-            }}
-            """
+            estilo_boton_3d("QToolButton", Verde.BLANCO, radio=6, padding_v=2, padding_h=8, font_size="8.3pt")
         )
         if callback is None:
             boton.setEnabled(False)
@@ -641,33 +588,15 @@ class MainMenuWindow(QMainWindow):
         # usuario, 2026-08-16) — espacio extra en vez de quedar pegado.
         fila.addSpacing(40)
 
-        btn_salir = QPushButton("Salir")
-        # Ícono casi al doble (pedido del usuario, 2026-08-20).
-        btn_salir.setIcon(icono("salir", 40))
-        btn_salir.setIconSize(QSize(40, 40))
-        # Más grande y con letra en verde oscuro (feedback del usuario,
-        # 2026-08-16) — se distingue a propósito del verde lleno que usa
-        # el resto de los botones de la app, es la acción de salir.
-        btn_salir.setStyleSheet(
-            f"""
-            QPushButton {{
-                background-color: {Verde.PASTEL};
-                color: {Verde.OSCURO};
-                border: 1px solid {Verde.MEDIO_CLARO};
-                border-radius: 8px;
-                font-size: 11pt;
-                font-weight: bold;
-                padding: 8px 24px;
-            }}
-            QPushButton:hover {{
-                background-color: {Verde.MEDIO_CLARO};
-            }}
-            QPushButton:pressed {{
-                background-color: {Verde.MEDIO};
-                color: {Verde.BLANCO};
-            }}
-            """
-        )
+        # Ícono al extremo izquierdo, texto centrado (`BotonIconoTexto`,
+        # pedido del usuario, 2026-08-21) — más grande y con letra en
+        # verde oscuro (feedback del usuario, 2026-08-16): se distingue a
+        # propósito del verde lleno que usa el resto de los botones de la
+        # app, es la acción de salir.
+        btn_salir = BotonIconoTexto("salir", "Salir", tamano_icono=40, color_texto=Verde.OSCURO)
+        # Apariencia 3D (pedido del usuario, 2026-08-21) — mismo
+        # generador que el resto de los botones de la app.
+        btn_salir.setStyleSheet(estilo_boton_3d("QToolButton", Verde.PASTEL, radio=8, font_size="11pt"))
         btn_salir.clicked.connect(self.close)
         fila.addWidget(btn_salir)
 

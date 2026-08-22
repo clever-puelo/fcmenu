@@ -149,20 +149,20 @@ FUENTE_NORMAL = 'Helvetica'
 FUENTE_NEGRITA = 'Helvetica-Bold'
 
 if _ARIAL_BLACK_PATH.exists():
-    pdfmetrics.registerFont(TTFont("Arial-Black", str(_ARIAL_BLACK_PATH)))
-    FUENTE_TITULO = "Arial-Black"
+    pdfmetrics.registerFont(TTFont("Arial Black", str(_ARIAL_BLACK_PATH)))
+    FUENTE_TITULO = "Arial Black"
 
 if _LUCIDA_CONSOLE_PATH.exists():
-    pdfmetrics.registerFont(TTFont("Lucida-Console", str(_LUCIDA_CONSOLE_PATH)))
-    FUENTE_FIJA = "Lucida-Console"
+    pdfmetrics.registerFont(TTFont("Lucida Console", str(_LUCIDA_CONSOLE_PATH)))
+    FUENTE_FIJA = "Lucida Console"
 
 if _ARIAL_PATH.exists():
     pdfmetrics.registerFont(TTFont("Arial", str(_ARIAL_PATH)))
     FUENTE_NORMAL = "Arial"
 
 if _ARIAL_BOLD_PATH.exists():
-    pdfmetrics.registerFont(TTFont("Arial-Bold", str(_ARIAL_BOLD_PATH)))
-    FUENTE_NEGRITA = "Arial-Bold"
+    pdfmetrics.registerFont(TTFont("Arial Bold", str(_ARIAL_BOLD_PATH)))
+    FUENTE_NEGRITA = "Arial Bold"
 
 
 def _directorio_comprobantes(fecha: date) -> Path:
@@ -182,8 +182,8 @@ def _directorio_comprobantes(fecha: date) -> Path:
 
 _UNIDADES = [
     "UN", "DOS", "TRES", "CUATRO", "CINCO", "SEIS", "SIETE", "OCHO", "NUEVE", "DIEZ",
-    "ONCE", "DOCE", "TRECE", "CATORCE", "QUINCE", "DIESISEIS", "DIESISIETE", "DIESIOCHO",
-    "DIESINUEVE", "VEINTE", "VEINTIUN", "VEINTIDOS", "VEINTITRES", "VEINTICUATRO",
+    "ONCE", "DOCE", "TRECE", "CATORCE", "QUINCE", "DIECISEIS", "DIECISIETE", "DIECIOCHO",
+    "DIECINUEVE", "VEINTE", "VEINTIUN", "VEINTIDOS", "VEINTITRES", "VEINTICUATRO",
     "VEINTICINCO", "VEINTISEIS", "VEINTISIETE", "VEINTIOCHO", "VEINTINUEVE",
 ]
 _DECENAS = ["DIEZ", "VEINTE", "TREINTA", "CUARENTA", "CINCUENTA", "SESENTA", "SETENTA", "OCHENTA", "NOVENTA"]
@@ -415,7 +415,7 @@ def _dibujar_pagina_factura(
     # Ajuste a ojo del usuario (2026-08-20, sobre la 1ª ronda): a la
     # altura del logo (antes más arriba) y 5mm a la izquierda (antes
     # X=70 real).
-    c.drawString(*pos(17, 65), "S.R.L.")
+    c.drawString(*pos(20, 63), "S.R.L.")
 
     # --- Membrete (Arial 9/10/7 bold, X=18-20) -----------------------------
     c.setFont(FUENTE_TITULO, 9)
@@ -446,23 +446,23 @@ def _dibujar_pagina_factura(
     # la posición real, y ahora DENTRO de un recuadro (el original la
     # tenía suelta en esta réplica; el legacy sí la encierra en su propio
     # `DibujaRect`, ver docstring del módulo).
-    c.rect(99 * mm, y_de(28), 21 * mm, 15 * mm)
+    c.rect(105 * mm, y_de(32), 17 * mm, 17 * mm)
     c.setFont(FUENTE_TITULO, 30)
-    c.drawString(*pos(26, 104), datos.letra)
+    c.drawString(*pos(26, 110), datos.letra)
     c.setFont(FUENTE_NORMAL, 7)
     codigo_afip_doc = {"F A C T U R A": "01", "NOTA DE CRÉDITO": "03", "NOTA DE DÉBITO": "02"}.get(
         datos.titulo_comprobante.strip(), "01" if datos.letra == "A" else "06"
     )
-    c.drawString(*pos(16, 102), f"Código {codigo_afip_doc}")
+    c.drawString(*pos(30, 108), f"Código {codigo_afip_doc}")
 
     # --- Título + Número + Fecha ---------------------------------------
     c.setFont(FUENTE_TITULO, 20)
     titulo = "COTIZACIÓN" if datos.es_cotizacion else datos.titulo_comprobante
     # Ajuste a ojo del usuario: FACTURA 5mm más abajo y 5mm más a la
     # derecha que la posición real (Y=5,X=130).
-    c.drawString(*pos(10, 135), titulo)
-    c.setFont(FUENTE_TITULO, 14)
-    c.drawString(*pos(20, 140), f"{datos.punto_venta:04d}-{datos.numero:08d}")
+    c.drawString(*pos(17, 140), titulo)
+    c.setFont(FUENTE_NORMAL, 14)
+    c.drawString(*pos(22, 150), f"{datos.punto_venta:04d}-{datos.numero:08d}")
     c.setFont(FUENTE_NORMAL, 10)
     c.drawString(*pos(27, 146), formatear_fecha_impresion(datos.fecha))
     if datos.en_dolares:
@@ -713,12 +713,12 @@ def _dibujar_membrete_no_fiscal(
     def y_pt(lin_mm: float) -> float:
         return alto - (y_top_mm + lin_mm) * mm
 
-    _dibujar_logo(c, 8 * mm, y_pt(0), ancho=26 * mm)
-    c.setFont(FUENTE_TITULO, 13)
-    c.drawString(*pos(11, 40), "S.R.L.")
+    _dibujar_logo(c, 10 * mm, y_pt(5), ancho=50 * mm)
+    c.setFont(FUENTE_TITULO, 20)
+    c.drawString(*pos(19, 63), "S.R.L.")
 
-    c.setFont(FUENTE_TITULO, 18)
-    c.rect(98 * mm, y_pt(15), 15 * mm, 13 * mm)
+    c.setFont(FUENTE_TITULO, 24)
+    c.rect(1 * mm, y_pt(140), 150 * mm, 13 * mm)
     c.drawCentredString(105.5 * mm, y_pt(12), letra)
 
     # Tamaño de fuente adaptado al largo del título ("Recibo Oficial" vs
@@ -727,7 +727,7 @@ def _dibujar_membrete_no_fiscal(
     # títulos largos).
     tamano_titulo = 15 if len(titulo) <= 16 else 12
     c.setFont(FUENTE_TITULO, tamano_titulo)
-    c.drawString(*pos(11, 118), titulo)
+    c.drawString(*pos(13, 118), titulo)
     c.setFont(FUENTE_TITULO, 10)
     c.drawString(*pos(19.5, 118), numero_texto)
     c.setFont(FUENTE_NORMAL, 6.5)

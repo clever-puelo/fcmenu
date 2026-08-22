@@ -20,9 +20,26 @@ ventana individualmente, es una hoja de estilo Qt (QSS) global.
 
 from __future__ import annotations
 
-from PyQt6.QtCore import Qt, QTimer
-from PyQt6.QtGui import QIcon, QPixmap
-from PyQt6.QtWidgets import QApplication, QComboBox, QLineEdit
+from PyQt6.QtCore import QCoreApplication, Qt, QTimer
+from PyQt6.QtGui import QColor, QIcon, QPixmap
+from PyQt6.QtWidgets import QApplication, QComboBox, QGraphicsDropShadowEffect, QLineEdit, QPushButton
+
+# El navegador embebido de la ficha de Cliente ("Google Earth",
+# `navegador_dialog.py`, `QWebEngineView`) necesita que TODAS las
+# ventanas de la app compartan el mismo contexto OpenGL — Qt exige que
+# esto se fije ANTES de crear la instancia de `QApplication`, no alcanza
+# con importar `QtWebEngineWidgets` recién al abrir esa ventana puntual
+# (que es justamente lo que hace `navegador_dialog.py` a propósito, para
+# no cargar el paquete pesado en cada arranque de la app) — bug real
+# reportado por el usuario (2026-08-21): abrir "Google Earth" tiraba
+# `ImportError: QtWebEngineWidgets must be imported or
+# Qt.AA_ShareOpenGLContexts must be set before a QCoreApplication
+# instance is created`. Se fija acá, a nivel de MÓDULO (no dentro de
+# `aplicar_tema()`, que ya corre demasiado tarde: todo `main_xxx.py`
+# la llama recién DESPUÉS de construir el `QApplication`) — el `from
+# .theme import aplicar_tema` de cada entry point ya se ejecuta antes de
+# esa línea, así que alcanza con que este archivo se importe.
+QCoreApplication.setAttribute(Qt.ApplicationAttribute.AA_ShareOpenGLContexts, True)
 
 # Cantidad de renglones visibles en el desplegable de CUALQUIER combo de
 # la app antes de scrollear — pedido del usuario (2026-08-17): "el combo
@@ -80,10 +97,154 @@ def _instalar_seleccion_total_al_foco() -> None:
         # se ganó con un clic de mouse, el propio `mousePressEvent()`
         # de Qt todavía está pendiente y deshace un `selectAll()` hecho
         # acá mismo, síncrono.
-        QTimer.singleShot(0, self.selectAll)
+        #
+        # Bug real encontrado con datos reales (2026-08-21, ABM de
+        # Clientes): "Razón Social" aparecía resaltada apenas se elegía
+        # un cliente en la búsqueda, aunque la ficha quedara en modo
+        # Sólo-Ver (deshabilitada). Causa: la búsqueda es un diálogo
+        # MODAL abierto ENCIMA de la ficha — el foco real de Qt vuelve a
+        # `txt_nomb` (que lo tenía antes de abrirse, en modo Alta) recién
+        # al cerrarse, disparando ESTE `focusInEvent` de nuevo, justo
+        # cuando `_cargar_cliente()` está por deshabilitar el campo
+        # (`_set_modo("ver")`). El `singleShot` quedaba pendiente y
+        # ejecutaba `selectAll()` un instante después, ya con el nombre
+        # real cargado — se ve el campo "seleccionado" pese a estar
+        # deshabilitado. Se re-chequea `isEnabled()` recién al disparar
+        # el timer (no alcanza con chequearlo acá arriba, síncrono:
+        # todavía no se deshabilitó en este mismo instante).
+        QTimer.singleShot(0, lambda: self.selectAll() if self.isEnabled() else None)
 
     QLineEdit.focusInEvent = _focus_in_con_seleccion
     QLineEdit._fcmenu_seleccion_instalada = True
+
+
+def _instalar_sombra_botones() -> None:
+    """Parchea `QPushButton.__init__` UNA vez por proceso para que TODO
+    botón de la app, sin excepción, tenga una sombra real proyectada
+    debajo — pedido del usuario (2026-08-21): "que los botones tengan
+    apariencia tridimensional, con iluminación y sombras". El relieve/
+    iluminación (gradiente + bisel) lo resuelve el QSS de
+    `estilo_boton_3d()` — pero Qt Style Sheets NO soporta `box-shadow`
+    (no es CSS real, un subconjunto), así que la sombra de verdad se
+    agrega acá aparte, con `QGraphicsDropShadowEffect` (efecto gráfico
+    real, no dibujable por QSS). Mismo patrón ya usado para
+    `QComboBox.__init__` (`_instalar_limite_combos`) — parchear el
+    constructor una sola vez alcanza para CUALQUIER botón nuevo de
+    cualquier pantalla, sin tener que acordarse de aplicarlo a mano en
+    cada una.
+
+    Sólo `QPushButton` (no `QToolButton` acá) — `QToolButton` lo usa Qt
+    también para controles internos chicos (ej. la "x" de cerrar de una
+    pestaña) donde una sombra dramática se ve mal; `BotonIconoTexto`
+    (`widgets.py`, el único `QToolButton` "de verdad" que arma la app)
+    se aplica la sombra a mano en su propio `__init__`, con el mismo
+    `aplicar_sombra_boton()` de acá abajo."""
+    if getattr(QPushButton, "_fcmenu_sombra_instalada", False):
+        return  # ya parcheado (ej. tests que llaman aplicar_tema más de una vez)
+    init_original = QPushButton.__init__
+
+    def _init_con_sombra(self, *args, **kwargs):  # noqa: ANN001, ANN002, ANN003
+        init_original(self, *args, **kwargs)
+        aplicar_sombra_boton(self)
+
+    QPushButton.__init__ = _init_con_sombra
+    QPushButton._fcmenu_sombra_instalada = True
+
+
+def aplicar_sombra_boton(boton) -> None:  # noqa: ANN001 (cualquier QWidget-botón)
+    """Sombra real proyectada (`QGraphicsDropShadowEffect`) — suave y
+    chica a propósito (blur 8px, offset 2px, gris al 45% de opacidad):
+    tiene que leerse como "el botón flota un poco", no como una sombra
+    dura de post-it. Reusado por `_instalar_sombra_botones()` (todo
+    `QPushButton`) y por `BotonIconoTexto.__init__` (`widgets.py`)."""
+    sombra = QGraphicsDropShadowEffect(boton)
+    sombra.setBlurRadius(8)
+    sombra.setOffset(0, 2)
+    sombra.setColor(QColor(0, 0, 0, 115))
+    boton.setGraphicsEffect(sombra)
+
+
+def _tono(color_hex: str, factor: float) -> str:
+    """Aclara (`factor` > 1) u oscurece (`factor` < 1) `color_hex`
+    multiplicando cada canal RGB — usado por `estilo_boton_3d()` para
+    derivar el gradiente/bisel de CUALQUIER color base sin tener que
+    calibrar una paleta de 3-4 tonos a mano por cada botón/pantalla."""
+    color = QColor(color_hex)
+    canal = lambda v: min(255, max(0, round(v * factor)))  # noqa: E731
+    return QColor(canal(color.red()), canal(color.green()), canal(color.blue())).name()
+
+
+def estilo_boton_3d(
+    selector: str,
+    color_base: str,
+    color_texto: str = "",
+    *,
+    radio: int = 5,
+    padding_v: int = 6,
+    padding_h: int = 16,
+    font_size: str = "",
+) -> str:
+    """Bloque QSS con apariencia tridimensional para `selector` (ej.
+    `"QPushButton"`, `"QToolButton"`) — pedido del usuario (2026-08-21):
+    "que los botones tengan apariencia tridimensional, con iluminación y
+    sombras. Simular movimiento a pasar y al oprimir".
+
+    - **Iluminación/relieve**: gradiente vertical (más claro arriba, más
+      oscuro abajo) + bisel de 4 bordes (más claro arriba/izquierda, más
+      oscuro abajo/derecha en reposo — el bisel clásico de un botón
+      "elevado"; se invierte al presionar, simulando que se hunde).
+    - **Al pasar el mouse**: gradiente más claro/brillante (`:hover`).
+    - **Al oprimir**: gradiente y bisel invertidos + el contenido se
+      corre 1px hacia abajo (`padding-top`/`padding-bottom` asimétricos
+      en `:pressed`) — el botón "se hunde" de verdad, no sólo cambia de
+      color.
+    - **Sombra**: Qt Style Sheets NO soporta `box-shadow` — la sombra
+      real la agrega aparte `aplicar_sombra_boton()` (`QGraphicsDropShadowEffect`),
+      no este QSS.
+
+    Los tonos se derivan automáticamente de `color_base` (`_tono()`) —
+    sirve para cualquier color de cualquier pantalla, sin necesidad de
+    definir una paleta de relieve aparte para cada una."""
+    claro = _tono(color_base, 1.22)
+    muy_claro = _tono(color_base, 1.45)
+    oscuro = _tono(color_base, 0.8)
+    muy_oscuro = _tono(color_base, 0.62)
+    hover_claro = _tono(color_base, 1.55)
+    hover_oscuro = _tono(color_base, 1.12)
+    disabled = _tono(color_base, 1.35)
+    color_prop = f"color: {color_texto};" if color_texto else ""
+    fuente_prop = f"font-size: {font_size};" if font_size else ""
+
+    return f"""
+    {selector} {{
+        background: qlineargradient(x1:0, y1:0, x2:0, y2:1, stop:0 {claro}, stop:1 {oscuro});
+        {color_prop}
+        {fuente_prop}
+        border-top: 1px solid {muy_claro};
+        border-left: 1px solid {muy_claro};
+        border-bottom: 2px solid {muy_oscuro};
+        border-right: 2px solid {muy_oscuro};
+        border-radius: {radio}px;
+        padding: {padding_v}px {padding_h}px;
+        font-weight: bold;
+    }}
+    {selector}:hover {{
+        background: qlineargradient(x1:0, y1:0, x2:0, y2:1, stop:0 {hover_claro}, stop:1 {hover_oscuro});
+    }}
+    {selector}:pressed {{
+        background: qlineargradient(x1:0, y1:0, x2:0, y2:1, stop:0 {oscuro}, stop:1 {claro});
+        border-top: 2px solid {muy_oscuro};
+        border-left: 2px solid {muy_oscuro};
+        border-bottom: 1px solid {muy_claro};
+        border-right: 1px solid {muy_claro};
+        padding-top: {padding_v + 1}px;
+        padding-bottom: {max(padding_v - 1, 0)}px;
+    }}
+    {selector}:disabled {{
+        background: {disabled};
+        border-color: {disabled};
+    }}
+    """
 
 
 class Verde:
@@ -141,24 +302,7 @@ def hoja_de_estilo() -> str:
         padding: 0 6px;
         color: {v.OSCURO};
     }}
-    QPushButton {{
-        background-color: {v.MEDIO};
-        color: {v.BLANCO};
-        border: none;
-        border-radius: 5px;
-        padding: 6px 16px;
-        font-weight: bold;
-    }}
-    QPushButton:hover {{
-        background-color: {v.MEDIO_OSCURO};
-    }}
-    QPushButton:pressed {{
-        background-color: {v.OSCURO};
-    }}
-    QPushButton:disabled {{
-        background-color: {v.CLARO};
-        color: {v.TEXTO_SUAVE};
-    }}
+    {estilo_boton_3d("QPushButton", v.MEDIO, v.BLANCO)}
     QPushButton:default {{
         border: 2px solid {v.OSCURO};
     }}
@@ -273,6 +417,7 @@ def aplicar_tema(app: QApplication) -> None:
     app.setStyle("Fusion")
     _instalar_limite_combos()
     _instalar_seleccion_total_al_foco()
+    _instalar_sombra_botones()
 
 
 def icono_app() -> QIcon:

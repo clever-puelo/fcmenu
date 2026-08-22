@@ -80,7 +80,12 @@ from .decimals import format_decimal
 from .detalle_grid import DetalleGrid
 from .nota_cliente_dialog import NotaClienteDialog
 from .pdf_preview_dialog import PdfPreviewDialog
-from .widgets import crear_recuadro_subtotal_total, redimensionar_pct_pantalla, texto_contacto_cliente
+from .widgets import (
+    ESTILO_PANEL_COMPACTO,
+    crear_recuadro_subtotal_total,
+    redimensionar_pct_pantalla,
+    texto_contacto_cliente,
+)
 
 # CUIT del emisor — hardcodeado también en el legacy (`ConectaAFIP()`,
 # `WSFE.Cuit = "33703467909"`, empresa "ALESTEL SRL" ya confirmada en la
@@ -94,17 +99,6 @@ CUIT_EMISOR_DEFAULT = "33703467909"
 # se graba tal cual en `FcivaVta.MOTI` (CabFact.frm:721,690-692).
 FORMAS_PEDIDO = ["1-Personal", "2-Telefónico", "3-Mail", "4-Fax", "5-Otro"]
 FORMA_PEDIDO_DEFAULT_INDEX = 1  # "2-Telefónico" (CabFact.frm Form_Load: Combo4.ListIndex = 1)
-
-
-# Override puntual (sólo estos 3 paneles, no el resto de la app — el
-# `QGroupBox` global de `theme.py` sigue igual en todas las demás
-# pantallas) del margen/padding de chrome del recuadro — pedido del
-# usuario (2026-08-21): "comprimir más la Cabecera, el pie, ajustando
-# los márgenes superiores e inferiores... para ganar espacio" en el
-# Detalle. Sólo pisa `margin-top`/`padding` (Qt cascada por propiedad:
-# lo que no se redefine acá sigue saliendo del QSS global — borde,
-# color de fondo, etc.).
-ESTILO_PANEL_COMPACTO = "QGroupBox { margin-top: 6px; padding: 4px 6px 3px 6px; }"
 
 
 def _formatear_porcentaje(valor: Decimal) -> str:

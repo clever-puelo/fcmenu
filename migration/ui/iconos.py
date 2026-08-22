@@ -89,10 +89,19 @@ GLIFOS: dict[str, tuple[str, str]] = {
     # "ncredito_merc" (es la misma familia conceptual, Nota de Crédito),
     # color distinto para diferenciarla de un vistazo en la barra.
     "nci": ("↩️", Verde.MEDIO_CLARO),
-    # Botón "ver en el mapa" de Dirección (Clientes, 2026-08-21) — pin de
-    # ubicación, no el logo de Google Maps (evitar usar una marca ajena
-    # como ícono propio); abre la dirección en Google Maps en el
-    # navegador, ver `cliente_detalle_dialog.py`.
+    # Botón "Ver en el Mapa" de la ficha de Cliente (2026-08-21) — pin de
+    # ubicación genérico, no el logo real de Google Maps (evitar usar una
+    # marca ajena como ícono propio). Abre la dirección del cliente en un
+    # navegador embebido dentro de la propia app (`navegador_dialog.py`),
+    # no en el navegador externo — ver `cliente_detalle_dialog.py`.
+    #
+    # Bug real reportado por el usuario (2026-08-21): el botón apuntaba
+    # primero a Google EARTH (globo 3D, `"earth"`) — es una SPA pesada
+    # (Flutter + WebGL/WebGPU) que tira errores de consola y no anda bien
+    # embebida (Chromium de QtWebEngine sin aceleración GPU completa).
+    # Para el objetivo real ("ver la ubicación en el mapa") alcanza y
+    # sobra con Google MAPS en modo `embed` — mapa 2D liviano, sin 3D/
+    # WebGL, mismo `NavegadorDialog` (QWebEngineView) ya andando.
     "mapa": ("📍", Verde.PASTEL),
 }
 
