@@ -3,11 +3,21 @@
 # `migration/ui/main_menu.py` (MainMenuWindow). Ver `migrar_fcmenu.spec`
 # para el migrador Access->Postgres (un .exe aparte, no esto).
 #
-# `console=True` a propósito en esta primera versión de prueba (ver
-# docs/instalacion_pc_nueva.md) — deja ver cualquier traceback/aviso de
-# conexión a Postgres en la ventana de consola mientras se valida en la
-# PC nueva. Pasar a `console=False` más adelante, una vez confirmado que
-# arranca bien, para la versión "limpia" sin caja negra de fondo.
+# `console=False` (2026-08-22 — antes `console=True` "a propósito en
+# esta primera versión de prueba... pasar a console=False más adelante,
+# una vez confirmado que arranca bien": ya se confirmó de punta a punta
+# contra Postgres real, varias veces, en esta sesión). Bug real
+# encontrado probando el lanzador (`launcher.py`/`fcmenu_launcher.spec`,
+# "la pantalla negra sigue apareciendo... más de 5 segundos"): con
+# `console=True`, Windows abre la consola (negra, vacía) apenas arranca
+# el PROCESO — antes de que una sola línea de Python corra — y se queda
+# ahí durante TODA la extracción del onefile + los imports pesados
+# (WebEngine/SQLAlchemy/ReportLab/zeep/cryptography) + la conexión a la
+# base, tapando/compitiendo con la bienvenida del lanzador durante ese
+# rato largo. Sin consola, ese hueco queda cubierto de verdad por la
+# bienvenida (que sigue arriba hasta que este proceso avisa que ya
+# mostró su ventana real, ver `_avisar_launcher_listo()` en
+# `main_menu.py`) — no aparece nada negro de por medio.
 from PyInstaller.utils.hooks import collect_all
 
 datas = [("assets", "assets")]
@@ -49,7 +59,7 @@ exe = EXE(
     upx=True,
     upx_exclude=[],
     runtime_tmpdir=None,
-    console=True,
+    console=False,
     disable_windowed_traceback=False,
     argv_emulation=False,
     target_arch=None,

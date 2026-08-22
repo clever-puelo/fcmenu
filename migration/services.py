@@ -1557,9 +1557,34 @@ class EmisionFacturaService:
     # actual (EmiFact.frm:1902-1928).
     CODMOVS_POR_LETRA = {"A": "21", "B": "22"}
 
+    # Campo de `Parametro` (fila única CLAVE='1') que lleva el "Próx. Nº"
+    # de cada Letra — réplica real de `CabFact.frm` líneas 960-981
+    # (`Case 1/2/3: ElNro = RgTABL!nume1+1` si Letra A, si no `nume5+1` —
+    # las 3 ramas hacen lo mismo, TipoFac=1 es el único caso real acá).
+    # Pedido del usuario (2026-08-22): mostrar esto en la cabecera del
+    # Facturador en vez de preguntarle a AFIP (más rápido, sin ida y
+    # vuelta de red) — y mantenerlo al día en cada emisión real, para
+    # que nunca quede desactualizado.
+    CAMPO_NUMERACION_POR_LETRA = {"A": "NUME1", "B": "NUME5"}
+
     def __init__(self, db: Session):
         self.db = db
         self.repos = RepositoryFactory(db)
+
+    def proximo_numero(self, letra: str) -> Optional[int]:
+        """Sólo lectura — "Próx. Nº" de la cabecera del Facturador, sin
+        consumir nada (a diferencia de la actualización real que hace
+        `emitir_factura` al confirmar una emisión). `None` si `Parametro`
+        no está configurado o la Letra no es A/B (el llamador decide qué
+        mostrar en ese caso — ver `FacturadorWindow._refrescar_proximo_
+        numero`)."""
+        campo = self.CAMPO_NUMERACION_POR_LETRA.get(letra)
+        if campo is None:
+            return None
+        config = self.repos.parametro().get_config()
+        if config is None:
+            return None
+        return (getattr(config, campo) or 0) + 1
 
     def emitir_factura(
         self,
@@ -1658,6 +1683,23 @@ class EmisionFacturaService:
                 USUAR=usuario6,
             )
             self.db.add(ctascte)
+
+            # Mantiene al día Parametro.NUME1/NUME5 (ver `proximo_numero`)
+            # — SETEADO directo al número recién emitido, no `+= 1`: AFIP
+            # es la autoridad real de la numeración (el `numero_
+            # comprobante` que llega acá ya salió de ahí, ver
+            # `FacturadorWindow._on_emitir`), así este contador local
+            # nunca puede quedar desincronizado aunque otra terminal/
+            # proceso haya emitido de por medio. Sólo informativo para el
+            # cartel de la cabecera — nunca bloquea una emisión que AFIP
+            # ya aprobó, por eso el `if config is not None` en vez de
+            # levantar como hace `CotizacionVentaService.confirmar_
+            # numero()` (ahí sí es la numeración real del comprobante).
+            campo_numeracion = self.CAMPO_NUMERACION_POR_LETRA.get(letra)
+            if campo_numeracion is not None:
+                config = self.repos.parametro().get_config()
+                if config is not None:
+                    setattr(config, campo_numeracion, numero_comprobante)
 
             self.db.commit()
         except Exception:

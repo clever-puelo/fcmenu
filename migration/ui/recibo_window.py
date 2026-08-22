@@ -53,6 +53,7 @@ Corriente (próxima fase, orden confirmado por el usuario).
 from __future__ import annotations
 
 import os
+from dataclasses import replace
 from datetime import date
 from decimal import Decimal
 
@@ -419,12 +420,21 @@ class ReciboWindow(QMainWindow):
             self.lbl_deuda.setText("$ 0,00")
             self._cargar_pendientes([])
             self._refrescar_proximo_numero()
+            # Bug real reportado por el usuario (2026-08-22): "si no se
+            # carga Cliente no permita hacer nada, sólo salir — ahora
+            # puede cargar valores". Sin Cliente elegido no tiene sentido
+            # dejar tipear Anticipo/Efectivo ni agregar Cheque/Retención
+            # (¿a la cuenta de quién se le imputaría?) — mismo criterio
+            # que ya usa el Facturador con su grilla de Detalle
+            # (`FacturadorWindow._refrescar_cliente`).
+            self._habilitar_carga(False)
             return
 
         self.lbl_cliente.setText(f"{cliente.CODIGO} — {(cliente.NOMB or '').strip()}")
         self.lbl_cliente_contacto.setText(texto_contacto_cliente(cliente))
         self.btn_nota_cliente.setEnabled(True)
         self.btn_elegir_cliente.setText(self.TEXTO_BTN_CAMBIAR_CLIENTE)
+        self._habilitar_carga(True)
 
         # Verificación de Nota ANTES de mostrar los Pendientes de Cobro
         # — mismo criterio ya pedido para el Facturador (feedback del
@@ -441,6 +451,21 @@ class ReciboWindow(QMainWindow):
         self._cargar_pendientes(pendientes)
         self._refrescar_proximo_numero()
         self._recalcular_totales()
+
+    def _habilitar_carga(self, habilitado: bool) -> None:
+        """Todo lo que sirve para CARGAR el Recibo (Pendientes de Cobro,
+        Anticipo, Efectivo, Cheque/Retención) — deshabilitado sin
+        Cliente elegido, pedido del usuario (2026-08-22). "Salir" (y
+        elegir/cambiar Cliente) siguen disponibles siempre, no forman
+        parte de esto."""
+        for widget in (
+            self.tabla_pendientes,
+            self.txt_anticipo,
+            self.txt_efectivo,
+            self.btn_agregar_pago,
+            self.tabla_pagos,
+        ):
+            widget.setEnabled(habilitado)
 
     def _actualizar_boton_nota_cliente(self) -> None:
         self.tiene_nota_cliente = self.cliente_actual is not None and (
@@ -623,6 +648,17 @@ class ReciboWindow(QMainWindow):
         banco = self.repos.banco().by_cod(int(codigo))
         return (banco.NOMBRE or "").strip() if banco is not None else codigo
 
+    def _cheques_para_pdf(self, cheques: list[PagoCheque]) -> list[PagoCheque]:
+        """Copia de `cheques` con `.banco` resuelto a NOMBRE (no el
+        código) — sólo para el PDF (`pdf.py` no tiene acceso a la tabla
+        de Bancos, réplica fiel de `DetPago.frm:889` que graba el
+        `Label5.Caption` YA resuelto, no el código tal cual). Bug real
+        reportado por el usuario (2026-08-22): el PDF imprimía "Bco. xx"
+        (el código). Se arma una copia — los objetos originales de
+        `self._pagos` siguen con el código, que es lo que necesita
+        `EmisionReciboService.emitir_recibo()` para persistir."""
+        return [replace(cheque, banco=self._nombre_banco(cheque.banco)) for cheque in cheques]
+
     def _refrescar_tabla_pagos(self) -> None:
         self.tabla_pagos.setRowCount(0)
         for fila, pago in enumerate(self._pagos):
@@ -755,7 +791,7 @@ class ReciboWindow(QMainWindow):
                 aplicaciones=aplicaciones,
                 anticipo=anticipo,
                 importe_efectivo=importe_efectivo,
-                cheques=cheques,
+                cheques=self._cheques_para_pdf(cheques),
                 retenciones=retenciones,
                 total_pago=total_pago,
             )

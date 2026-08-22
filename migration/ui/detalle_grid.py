@@ -145,9 +145,27 @@ class _DelegadoNumerico(QStyledItemDelegate):
     operador no podía cargar ningún decimal. `parse_decimal()`
     (`migration/decimals.py`) ya interpreta un punto como separador
     decimal cuando el texto no tiene ninguna coma, así que ensanchar acá
-    el validador no rompe nada río abajo."""
+    el validador no rompe nada río abajo.
 
-    _VALIDADOR = QRegularExpressionValidator(QRegularExpression(r"[0-9]*[.,]?[0-9]*"))
+    **Bug grave real, encontrado con datos reales (2026-08-22, "no sale
+    del precio, se queda allí")**: el regex de arriba sólo dejaba pasar
+    UN separador en total — pero `format_decimal()` (lo que precarga
+    Precio Unit. apenas se resuelve un Artículo) usa la convención es-AR
+    completa, PUNTO de miles + COMA decimal, para cualquier importe
+    ≥ 1000 (ej. "37.405,35"). Ese texto precargado tiene DOS separadores
+    y el regex viejo lo marcaba como inválido — el validador, al
+    rechazar el contenido ACTUAL del campo (no sólo bloquear la próxima
+    tecla), hacía que Qt directamente IGNORARA el Enter sobre esa celda
+    (ni committeaba el dato ni disparaba `closeEditor()` — confirmado
+    instrumentando el código real: cero rastro de `closeEditor()` en
+    ese Enter). Con un Artículo de precio chico (< 1000, un solo
+    separador) nunca se notaba — de ahí que costó tanto reproducirlo.
+    Nuevo regex: dígitos, con CUALQUIER cantidad de puntos intercalados
+    (miles, sin exigir agruparlos de a 3 — no hace falta ser tan
+    estricto, `parse_decimal()`/`format_decimal()` ya son la fuente de
+    verdad del formato real) y a lo sumo UNA coma al final (decimales)."""
+
+    _VALIDADOR = QRegularExpressionValidator(QRegularExpression(r"[0-9.]*,?[0-9]*"))
 
     def createEditor(self, parent, option, index):  # noqa: N802 (Qt override)
         editor = super().createEditor(parent, option, index)
@@ -163,6 +181,7 @@ class DetalleGrid(QTableWidget):
         cliente_actual: Callable[[], Optional[Cliente]],
         en_dolares: Callable[[], bool],
         cotizacion: Callable[[], Decimal],
+        hay_cotizacion_hoy: Callable[[], bool],
         al_cambiar: Callable[[], None],
         parent: QWidget | None = None,
     ):
@@ -171,6 +190,7 @@ class DetalleGrid(QTableWidget):
         self._cliente_actual = cliente_actual
         self._en_dolares = en_dolares
         self._cotizacion = cotizacion
+        self._hay_cotizacion_hoy = hay_cotizacion_hoy
         self._al_cambiar = al_cambiar  # callback: recalcular totales del Pie
 
         self._estado: dict[int, _EstadoFila] = {}
@@ -181,6 +201,11 @@ class DetalleGrid(QTableWidget):
         # celda en celda muy rápido — encontrado con teclado real, ver
         # `_iniciar_edicion()`/`closeEditor()`).
         self._celda_editando: Optional[tuple[int, int]] = None
+        # `True` mientras `_aplicar_articulo()` está corriendo — incluye
+        # el tiempo que pasa DENTRO de los diálogos modales que abre
+        # (`NotaArticuloDialog`/`DespachoSelectorDialog`, ambos
+        # `.exec()`). Ver `_despues_de_cerrar_editor()`.
+        self._resolviendo_articulo = False
 
         self.setItemDelegate(_DelegadoNumerico(self))
         self.setHorizontalHeaderLabels(COLUMNAS)
@@ -260,6 +285,14 @@ class DetalleGrid(QTableWidget):
             self._aplicar_alineacion(item, columna)
             self.setItem(fila, columna, item)
         item.setText(texto)
+        if columna == COL_DESCRIPCION:
+            # Tooltip con la descripción COMPLETA (pedido del usuario,
+            # 2026-08-22: "cuando se posiciona el cursor sobre la celda
+            # de descripción, muestre un toolbox con la descripción
+            # completa") — la columna es angosta y una descripción real
+            # queda cortada visualmente; el tooltip nativo de Qt aparece
+            # solo al posicionar el mouse encima, sin agrandar la celda.
+            item.setToolTip(texto)
 
     @staticmethod
     def _aplicar_alineacion(item: QTableWidgetItem, columna: int) -> None:
@@ -269,34 +302,82 @@ class DetalleGrid(QTableWidget):
         item.setTextAlignment(alineacion)
 
     def _set_editable(self, fila: int, columna: int, editable: bool) -> None:
-        item = self.item(fila, columna)
-        if item is None:
-            item = QTableWidgetItem()
-            self.setItem(fila, columna, item)
-            ya_editable = None
-        else:
-            ya_editable = bool(item.flags() & Qt.ItemFlag.ItemIsEditable)
-        if ya_editable == editable:
-            # Bug real encontrado probando con teclado de verdad:
-            # `item.setFlags(...)` sobre la celda que se está editando EN
-            # ESE MOMENTO le resetea el texto al editor activo (Qt
-            # re-sincroniza el editor abierto cuando el modelo "cambia",
-            # aunque el flag resultante sea idéntico al que ya tenía) —
-            # típicamente pasa con la propia celda Sección, que dispara
-            # `_actualizar_editabilidad_fila` para sí misma apenas se
-            # resuelve. Evitar el `setFlags()` redundante lo soluciona.
-            return
-        flags = Qt.ItemFlag.ItemIsSelectable | Qt.ItemFlag.ItemIsEnabled
-        if editable:
-            flags |= Qt.ItemFlag.ItemIsEditable
-        item.setFlags(flags)
+        # Bug real reportado por el usuario (2026-08-22, reproducido con
+        # datos reales — Sección "A"/código 101 — con un script que
+        # simula teclado real contra la grilla): `item.setFlags(...)`
+        # más abajo dispara `itemChanged` TAMBIÉN (no sólo `setText()` lo
+        # hace) — Qt no distingue "cambió el texto" de "cambió si se
+        # puede editar" a los fines de esa señal. `_actualizar_
+        # editabilidad_fila()` (la única llamadora real) corre SIEMPRE
+        # DESPUÉS del bloque `self._actualizando = True/False` que
+        # protege el `_set_texto()` de Precio en `_aplicar_articulo` —
+        # este `setFlags()` quedaba MÁS de ese bloque protegido, así que
+        # su `itemChanged` SÍ se procesaba como si el operador hubiera
+        # tipeado algo en Precio de verdad, disparando `_on_precio_
+        # editado()` (con el aviso de "falta cargar X") antes de tiempo
+        # — de ahí el error apenas se resolvía el Artículo por código,
+        # bastante antes de llegar a Precio. Mismo criterio que ya usa
+        # `_set_texto()`: todo cambio programático de la celda queda
+        # bajo esta guarda.
+        self._actualizando = True
+        try:
+            item = self.item(fila, columna)
+            if item is None:
+                item = QTableWidgetItem()
+                self.setItem(fila, columna, item)
+                ya_editable = None
+            else:
+                ya_editable = bool(item.flags() & Qt.ItemFlag.ItemIsEditable)
+            if ya_editable == editable:
+                # Bug real encontrado probando con teclado de verdad:
+                # `item.setFlags(...)` sobre la celda que se está
+                # editando EN ESE MOMENTO le resetea el texto al editor
+                # activo (Qt re-sincroniza el editor abierto cuando el
+                # modelo "cambia", aunque el flag resultante sea
+                # idéntico al que ya tenía) — típicamente pasa con la
+                # propia celda Sección, que dispara `_actualizar_
+                # editabilidad_fila` para sí misma apenas se resuelve.
+                # Evitar el `setFlags()` redundante lo soluciona.
+                return
+            flags = Qt.ItemFlag.ItemIsSelectable | Qt.ItemFlag.ItemIsEnabled
+            if editable:
+                flags |= Qt.ItemFlag.ItemIsEditable
+            item.setFlags(flags)
+        finally:
+            self._actualizando = False
 
     def _iniciar_edicion(self, fila: int, columna: int) -> None:
         """Punto de conveniencia para pasar a editar una celda desde
         código propio (navegación tras Enter, F2, foco inicial). El
         registro real de `self._celda_editando` pasa por `edit()` (ver
         más abajo), así que esto también cubre ediciones que arranca el
-        propio operador (clic, flechas + tipear) sin pasar por acá."""
+        propio operador (clic, flechas + tipear) sin pasar por acá.
+
+        **Bug real reportado por el usuario (2026-08-22), reproducido
+        con datos reales — Sección "A", código con lotes de Despacho**:
+        "cargo A, 100, enter, aparece selección de despacho, enter,
+        cantidad 5, enter, enter (en el precio) y no pasa nada". Un
+        script con `QTest` simulando el teclado real lo confirmó: apenas
+        se cierra `DespachoSelectorDialog` (`.accept()`/`.reject()`, la
+        forma real en que se cierra, no sólo `.close()`), el foco de
+        teclado se pierde DEL TODO — ni la grilla ni el editor nuevo que
+        `editItem()` acababa de abrir lo tienen (`QApplication.
+        focusWidget()` daba `None` incluso DESPUÉS de este método, con
+        `self.state()` igual reportando `EditingState`). Sin foco real,
+        las teclas que el operador sigue tipeando (cantidad, luego
+        Enter en Precio) no le llegan a nadie — de ahí el "no pasa
+        nada". `self.setFocus()` ANTES de abrir el editor fuerza a la
+        grilla (y por lo tanto al editor que abre `editItem()` a
+        continuación) a recuperar el foco real, sin depender de que Qt
+        se lo devuelva solo después de un diálogo modal hijo. Hacía
+        falta además reactivar la VENTANA (`activateWindow()`, no sólo
+        `setFocus()` del widget) — confirmado con el mismo script: sin
+        esto, `editItem()` seguía sin poder darle foco real a ningún
+        editor nuevo."""
+        ventana = self.window()
+        if ventana is not None:
+            ventana.activateWindow()
+        self.setFocus()
         self.setCurrentCell(fila, columna)
         self.editItem(self.item(fila, columna))
 
@@ -407,9 +488,13 @@ class DetalleGrid(QTableWidget):
             # Lote" — vaciar la Sección de un renglón ya cargado dejaba
             # el Lote elegido para el Artículo ANTERIOR pegado en
             # pantalla (y en `estado`), como si siguiera vigente para lo
-            # que se cargue después.
+            # que se cargue después. Ampliado (2026-08-22, mismo tipo de
+            # bug reportado de nuevo): no sólo el Lote quedaba pegado —
+            # los segmentos/Descripción/Precio/Importe de la Sección
+            # ANTERIOR también, ver `_limpiar_datos_fila`.
             estado.nrodesp_elegido = None
-            self._limpiar_celda(fila, COL_LOTE)
+            estado.precio_lista = None
+            self._limpiar_datos_fila(fila)
             self._actualizar_editabilidad_fila(fila)
             return
 
@@ -427,15 +512,30 @@ class DetalleGrid(QTableWidget):
         estado.seccion = seccion
         estado.articulo = None
         # Mismo motivo que el `if not texto:` de arriba: cambiar la
-        # Sección de un renglón ya resuelto invalida el Lote que se
-        # había elegido para el Artículo/Sección anterior — se limpia
-        # acá mismo, antes de que se complete el código nuevo (que recién
-        # va a volver a pedir Lote si corresponde, vía `_aplicar_articulo`).
+        # Sección de un renglón ya resuelto invalida TODO lo que se
+        # había cargado para el Artículo/Sección anterior (segmentos,
+        # Descripción, Precio, Importe, Lote) — se limpia acá mismo,
+        # antes de que se complete el código nuevo (que recién va a
+        # volver a pedir Lote si corresponde, vía `_aplicar_articulo`).
         estado.nrodesp_elegido = None
+        estado.precio_lista = None
+        self._limpiar_datos_fila(fila)
         self._actualizando = True
         try:
             self._set_texto(fila, COL_SECCION, seccion.cod_seccion)
-            self._set_texto(fila, COL_LOTE, "")
+            # Descripción de la Sección como placeholder TEMPORAL (pedido
+            # del usuario, 2026-08-22: "luego de cargar la sección, en la
+            # celda descripción, coloque temporalmente la descripción de
+            # la sección. Cuando complete los datos, coloque la del
+            # artículo") — el operador todavía no terminó de tipear el
+            # código (o la Sección resuelve directo a un Artículo, ver
+            # más abajo), pero ya tiene algo real para leer en vez de la
+            # celda en blanco mientras carga. `_aplicar_articulo_impl`
+            # la pisa con la descripción real (del Artículo, o armada con
+            # los segmentos) apenas resuelve — ver `_set_texto(fila,
+            # COL_DESCRIPCION, descripcion)` ahí.
+            if seccion.descripcion:
+                self._set_texto(fila, COL_DESCRIPCION, seccion.descripcion)
         finally:
             self._actualizando = False
         self._actualizar_editabilidad_fila(fila)
@@ -455,6 +555,22 @@ class DetalleGrid(QTableWidget):
         self._actualizando = True
         try:
             self._set_texto(fila, columna, "")
+        finally:
+            self._actualizando = False
+
+    def _limpiar_datos_fila(self, fila: int) -> None:
+        """Vacía todas las celdas de DATOS de la fila (todo menos
+        Sección, que ya trae el valor nuevo puesto por el llamador) —
+        usado cuando la Sección de un renglón YA CARGADO cambia (a otra
+        Sección o a blanco): los segmentos/Descripción/Precio/Importe/
+        Lote quedaban pegados de la Sección/Artículo ANTERIOR, ya
+        inválidos para lo que se tipee a continuación (bug real
+        reportado por el usuario, 2026-08-22 — "cuando se cambia la
+        sección debe limpiar el renglón")."""
+        self._actualizando = True
+        try:
+            for columna in range(1, len(COLUMNAS)):  # todo menos COL_SECCION (0)
+                self._set_texto(fila, columna, "")
         finally:
             self._actualizando = False
 
@@ -560,11 +676,25 @@ class DetalleGrid(QTableWidget):
                     None,
                 )
                 etiqueta = faltante.etiqueta if faltante is not None else "una cantidad"
-                QMessageBox.warning(
-                    self,
-                    "Detalle",
-                    f'Falta cargar "{etiqueta}" en la Sección {estado.seccion.cod_seccion} '
-                    "para poder calcular el Importe.",
+                # Diferido (2026-08-22) — mismo motivo exacto que el
+                # aviso de desvío ±20% de `_on_precio_editado`: un
+                # `QMessageBox.warning()` SÍNCRONO acá pumpea el loop de
+                # eventos mientras todavía hay un callback de navegación
+                # encolado (`_despues_de_cerrar_editor`, disparado por
+                # `closeEditor()`) — corría DENTRO del modal, con la
+                # celda de Precio recién cerrada, y competía con el
+                # cierre real del modal por el operador (reportado como
+                # "el error de falta de dato da antes de que se cargue
+                # el dato mismo"). Diferido, el callback de navegación ya
+                # encolado corre primero, limpio, y el aviso queda para
+                # el final.
+                QTimer.singleShot(
+                    0,
+                    lambda seccion=estado.seccion.cod_seccion, etiqueta=etiqueta: QMessageBox.warning(
+                        self,
+                        "Detalle",
+                        f'Falta cargar "{etiqueta}" en la Sección {seccion} para poder calcular el Importe.',
+                    ),
                 )
             self._actualizando = True
             try:
@@ -640,6 +770,38 @@ class DetalleGrid(QTableWidget):
             self._iniciar_edicion(fila, COL_SECCION)
 
     def _aplicar_articulo(self, fila: int, articulo: Articulo) -> None:
+        # Bug real reportado por el usuario (2026-08-22, reproducido con
+        # datos reales — Sección "A", código 100): "cargo sección 'A',
+        # pide nro. y luego de dar enter da el error [de falta de
+        # dato]... debe esperar a llegar al precio". Encontrado con un
+        # script que simula el teclado real (`QTest`) contra la grilla
+        # con la base real: `_aplicar_articulo_impl()` (más abajo) abre
+        # diálogos MODALES en el medio (`NotaArticuloDialog`/
+        # `DespachoSelectorDialog`, ambos `.exec()`) ANTES de recalcular
+        # y de mover el foco a la primera cantidad — un modal `.exec()`
+        # bombea el loop de eventos, y ahí es donde el callback de
+        # navegación YA ENCOLADO por el cierre de la celda de código
+        # (`_despues_de_cerrar_editor`, ver su guarda `state() ==
+        # EditingState`) se cuela y corre ANTES de que `_aplicar_
+        # articulo_impl` haya llegado a mover el foco — en ESE momento
+        # todavía no hay ningún editor abierto (`state()` da
+        # `NoState`), la guarda no lo detecta, y navega por su cuenta a
+        # la próxima celda de cantidad — abriéndole un editor propio que
+        # compite con el que `_aplicar_articulo_impl` va a abrir
+        # después, cuando el modal cierra y sigue con lo suyo. La
+        # colisión terminaba comprometiendo Precio antes de tiempo, que
+        # es de donde salía el aviso de "falta cargar" prematuro. Acá se
+        # marca explícitamente el tramo completo (incluido el tiempo
+        # DENTRO de esos modales) para que `_despues_de_cerrar_editor`
+        # pueda detectarlo con certeza, sin depender de `state()` (que
+        # esta corrida ya demostró que no alcanza).
+        self._resolviendo_articulo = True
+        try:
+            self._aplicar_articulo_impl(fila, articulo)
+        finally:
+            self._resolviendo_articulo = False
+
+    def _aplicar_articulo_impl(self, fila: int, articulo: Articulo) -> None:
         cod1 = (articulo.COD1 or "").strip()
         cod2 = (articulo.COD2 or "").strip()
         try:
@@ -651,6 +813,25 @@ class DetalleGrid(QTableWidget):
         estado = self._estado.setdefault(fila, _EstadoFila())
         estado.seccion = seccion
         estado.articulo = articulo
+
+        # Bloqueo real (2026-08-22, pedido del usuario: "si no hay dólar
+        # cargado de hoy avanza igual, no debe hacerlo — antes pedía el
+        # dólar y no dejaba seguir") — sólo cuando ESTE Artículo/Factura
+        # realmente necesita convertir $/USD (`resolver_precio_articulo`
+        # sólo usa la cotización cuando la Sección y la Factura difieren
+        # en moneda); si los dos están en la misma moneda, la cotización
+        # ni se usa, así que no hay motivo para bloquear.
+        necesita_cotizacion = seccion.precio_en_dolares != self._en_dolares()
+        if necesita_cotizacion and not self._hay_cotizacion_hoy():
+            QMessageBox.warning(
+                self,
+                "Detalle",
+                "No hay Cotización del Dólar cargada para HOY — cargala en "
+                '"Cotización del Dólar" antes de facturar este Artículo.',
+            )
+            self._limpiar_fila(fila)
+            self._iniciar_edicion(fila, COL_SECCION)
+            return
 
         valores_codigo = separar_codigo(cod2, seccion.segmentos_codigo) if seccion.segmentos_codigo else []
         if seccion.usar_descripcion_seccion:
@@ -768,6 +949,28 @@ class DetalleGrid(QTableWidget):
             self._eliminar_fila_actual()
             event.accept()
             return
+        if (
+            event.key() in (Qt.Key.Key_Return, Qt.Key.Key_Enter)
+            and self.state() != QAbstractItemView.State.EditingState
+        ):
+            # Malentendido real, aclarado por el usuario (2026-08-22,
+            # tercera vuelta): la versión anterior hacía que Enter, con
+            # la celda sólo SELECCIONADA (sin editar), saltara derecho a
+            # la próxima — "con enter está pasando las celdas y no debe
+            # ser así tan fácil... con enter debe tomar el foco y luego
+            # de hacer el ingreso pasar a la celda siguiente". Es decir:
+            # el PRIMER Enter sobre una celda sólo seleccionada tiene
+            # que ABRIRLA para editar (foco real adentro, como F2 o
+            # tipear cualquier tecla) — el salto a la celda siguiente es
+            # cosa del PRÓXIMO Enter, una vez que ya hay un dato
+            # cargado de verdad, y eso ya lo resuelve solo el camino
+            # normal (`closeEditor()` -> `_despues_de_cerrar_editor()`
+            # -> `_navegar_o_bloquear()`, sin tocar acá).
+            fila, columna = self.currentRow(), self.currentColumn()
+            if fila >= 0 and columna >= 0:
+                self._iniciar_edicion(fila, columna)
+            event.accept()
+            return
         super().keyPressEvent(event)
 
     def closeEditor(self, editor, hint) -> None:  # noqa: N802 (Qt override)
@@ -834,7 +1037,84 @@ class DetalleGrid(QTableWidget):
             # callback esperaba su turno), no hay nada para navegar acá.
             return
 
+        if self._resolviendo_articulo:
+            # Ampliado (2026-08-22, mismo tipo de bug de arriba pero con
+            # un modal de por medio — ver el docstring de
+            # `_aplicar_articulo`): `state()` sólo detecta un editor YA
+            # ABIERTO, pero mientras `_aplicar_articulo` está pausado
+            # DENTRO de un `.exec()` (`NotaArticuloDialog`/
+            # `DespachoSelectorDialog`) todavía no abrió ninguno —
+            # `state()` da `NoState` justo en la ventana donde este
+            # callback, si no fuera por este chequeo, se colaba a
+            # navegar por su cuenta. `_aplicar_articulo` ya se ocupa de
+            # su propia navegación (a la primera cantidad, o al volver a
+            # Sección si el Artículo no tiene Precio) apenas termine.
+            return
+
+        self._navegar_o_bloquear(fila, columna)
+
+    def _navegar_o_bloquear(self, fila: int, columna: int) -> None:
+        """Decide y ejecuta el próximo paso de navegación desde `(fila,
+        columna)` — código compartido entre `_despues_de_cerrar_editor`
+        (cierre real de un editor) y `keyPressEvent` (Enter sobre una
+        celda sólo SELECCIONADA, sin editar — ver ahí). Antes cada
+        camino tenía su propia lógica de navegación por separado
+        (`moveCursor`/flecha derecha para el segundo caso) — bug real
+        reportado por el usuario (2026-08-22, tras el fix del código
+        vacío/inexistente): "una vez que el ingreso está correcto,
+        Enter en Precio debe saltar de renglón — con la flecha abajo
+        cambia de línea, pero no debe ser así [tiene que ser con
+        Enter]". La sospecha es que en la PC real, para cuando el
+        operador aprieta Enter en Precio, la celda a veces ya no está
+        realmente "editando" para Qt (mismo tipo de desincronización de
+        foco que ya se encontró y corrigió para el diálogo de Despacho)
+        — con la flecha-derecha como imitación, ESE Enter caía a
+        Importe (columna vecina, nunca editable) en vez de saltar de
+        renglón. Unificando las dos rutas en esta única función, el
+        resultado de Enter es SIEMPRE el mismo salto "inteligente"
+        (según `_orden_columnas_fila`, salta filas cuando corresponde),
+        sin importar si Qt todavía considera la celda "en edición" o
+        ya la dejó "sólo seleccionada"."""
         siguiente = self._siguiente_celda_editable(fila, columna)
+
+        # Bug grave real reportado por el usuario (2026-08-22): "si no se
+        # carga el código, sigue sin decir nada y ahí sí pasa a la línea
+        # siguiente. Artículo no existe" — reproducido con datos reales
+        # en 2 variantes: (a) código vacío + Enter, sin ningún aviso,
+        # saltaba derecho a Cantidad; (b) código completo pero SIN
+        # Artículo que lo tenga, `_reconsiderar_codigo_y_recalcular` SÍ
+        # avisa ("No se encontró un Artículo...") pero de cualquier
+        # forma dejaba seguir avanzando igual — el aviso no bloqueaba
+        # nada. Las dos dejaban seguir cargando cantidad/precio sobre un
+        # renglón SIN Artículo real (código armado a mano después, sin
+        # nada real detrás). Se bloquea acá, en el único lugar que sabe
+        # con certeza hacia dónde se estaba por navegar: si el próximo
+        # destino natural queda FUERA de las columnas de código (es
+        # decir, el operador ya terminó — o abandonó — la carga del
+        # código) y todavía no hay Artículo resuelto, no se avanza.
+        # Mientras el destino siga siendo OTRA columna de código (recién
+        # completando el segmento 2 de 3, por ejemplo) se deja seguir
+        # normal, ahí no hay nada que bloquear.
+        estado = self._estado.get(fila)
+        if estado is not None and estado.seccion is not None and estado.seccion.segmentos_codigo:
+            columnas_codigo = {POSICION_A_COLUMNA[s.posicion] for s in estado.seccion.segmentos_codigo}
+            if columna in columnas_codigo and estado.articulo is None:
+                si_avanza_fuera_del_codigo = siguiente is None or siguiente[1] not in columnas_codigo
+                if si_avanza_fuera_del_codigo:
+                    codigo_completo = all(
+                        self._texto(fila, POSICION_A_COLUMNA[s.posicion]) for s in estado.seccion.segmentos_codigo
+                    )
+                    if not codigo_completo:
+                        # Único caso sin aviso previo — el código completo
+                        # pero sin Artículo YA avisó "No se encontró..."
+                        # en `_reconsiderar_codigo_y_recalcular`, no hace
+                        # falta un segundo cartel para lo mismo.
+                        QMessageBox.warning(
+                            self, "Detalle", "Tenés que cargar un Artículo válido (código completo) antes de continuar."
+                        )
+                    self._iniciar_edicion(fila, columna)
+                    return
+
         if siguiente is not None:
             self._iniciar_edicion(*siguiente)
 

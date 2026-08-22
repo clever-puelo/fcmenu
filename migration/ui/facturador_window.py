@@ -260,6 +260,7 @@ class FacturadorWindow(QMainWindow):
             cliente_actual=lambda: self.cliente_actual,
             en_dolares=lambda: self.chk_en_dolares.isChecked(),
             cotizacion=self._cotizacion_actual,
+            hay_cotizacion_hoy=self._hay_cotizacion_hoy,
             al_cambiar=self._recalcular_totales,
             parent=self,
         )
@@ -431,17 +432,22 @@ class FacturadorWindow(QMainWindow):
         self.grid_detalle.foco_inicial()
 
     def _refrescar_proximo_numero(self) -> None:
+        """Réplica real de `CabFact.frm` líneas 954-988: el "Próx. Nº"
+        sale de `Parametro.NUME1` (Letra A) / `NUME5` (B) + 1, NO de
+        preguntarle a AFIP (pedido del usuario, 2026-08-22 — más rápido,
+        sin ida y vuelta de red; `EmisionFacturaService.emitir_factura`
+        mantiene esos campos al día en cada emisión real, ver su
+        docstring)."""
         if self.cliente_actual is None:
             self.lbl_proximo_numero.setText("Próx. Nº: —")
             return
         letra = self.factura_service.letra_comprobante(self.cliente_actual.CIVA or 0, self.cliente_actual.PCIA)
-        tipo_cbte = codigo_afip(letra, 1)
         punto_venta = punto_venta_por_tipo(1)
-        try:
-            ultimo = self.afip.ultimo_comprobante(punto_venta, tipo_cbte)
-            self.lbl_proximo_numero.setText(f"Próx. Nº: {punto_venta:04d}-{ultimo + 1:08d} (Letra {letra})")
-        except Exception:  # noqa: BLE001 — sólo informativo, no bloquea la carga
+        proximo = self.emision_service.proximo_numero(letra)
+        if proximo is None:
             self.lbl_proximo_numero.setText(f"Próx. Nº: (no disponible, Letra {letra})")
+            return
+        self.lbl_proximo_numero.setText(f"Próx. Nº: {punto_venta:04d}-{proximo:08d} (Letra {letra})")
 
     def _actualizar_boton_nota_cliente(self) -> None:
         """Color del botón "Nota Clte." refleja si el Cliente actual tiene
@@ -486,6 +492,21 @@ class FacturadorWindow(QMainWindow):
             return Decimal(hoy.DOLAR)
         ultima = self.repos.cotizacion().ultima()
         return Decimal(ultima.DOLAR) if ultima is not None and ultima.DOLAR else Decimal("1")
+
+    def _hay_cotizacion_hoy(self) -> bool:
+        """Bug real revertido a pedido del usuario (2026-08-22): "si no
+        hay dólar cargado de hoy avanza igual, no debe hacerlo — antes
+        pedía el dólar y no dejaba seguir". `MainMenuWindow.
+        _actualizar_cotizacion` ya avisa al arrancar (ese mensaje queda
+        igual, sin tocar) pero hasta ahora eso era sólo un aviso: el
+        Facturador dejaba cargar renglones en dólares igual, usando la
+        última cotización disponible (`_cotizacion_actual` arriba) como
+        si nada. Este checker es lo que `DetalleGrid._aplicar_articulo`
+        usa para BLOQUEAR de verdad — sólo cuando la Sección/Factura en
+        cuestión realmente necesita convertir (ver
+        `resolver_precio_articulo`), no en general."""
+        hoy = self.repos.cotizacion().by_fecha(date.today())
+        return hoy is not None and bool(hoy.DOLAR)
 
     def _on_en_dolares_cambiado(self) -> None:
         if self.renglones:

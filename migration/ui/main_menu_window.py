@@ -888,6 +888,25 @@ class MainMenuWindow(QMainWindow):
             # cuadro. 85%×80% del panel real (mismo criterio de piso de
             # `minimumSizeHint()` que el resto de esta función) deja
             # margen para ver que sigue habiendo un panel MDI alrededor.
+            # Bug real reportado por el usuario (2026-08-22): "si está la
+            # consulta de cta.corriente y se llama al recibo, éste
+            # aparece con la pantalla reducida, pero con el botón de
+            # maximizado sin estarlo — hay que oprimirlo dos veces". Con
+            # OTRA subventana de esta misma lista ya maximizada en el
+            # MDI (ej. Cta.Cte.), `QMdiArea` auto-maximiza cualquier
+            # subventana nueva apenas se muestra (`subventana.show()`,
+            # unas líneas arriba en `_mostrar()`) — para cuando se llega
+            # ACÁ, `subventana` YA está en estado Maximized, y un
+            # `resize()`/`move()` sobre una ventana maximizada no mueve
+            # nada visible en Qt (como mucho, banca la geometría
+            # "restaurada" para el próximo des-maximizado) — de ahí el
+            # ícono de "restaurar" mostrando un estado que la pantalla
+            # todavía no refleja. `showNormal()` primero fuerza el
+            # estado Normal real ANTES de aplicar el tamaño/posición
+            # calculados, para que sí surtan efecto — recién ahí
+            # `showMaximized()` maximiza de verdad, con una geometría de
+            # restauración correcta ya guardada.
+            subventana.showNormal()
             ancho_restaurado = max(round(area.width() * 0.85), minimo.width(), 300)
             alto_restaurado = max(round(area.height() * 0.80), minimo.height(), 300)
             subventana.resize(ancho_restaurado, alto_restaurado)

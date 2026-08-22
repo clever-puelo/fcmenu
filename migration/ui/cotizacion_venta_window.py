@@ -176,6 +176,7 @@ class CotizacionVentaWindow(QMainWindow):
             cliente_actual=lambda: self.cliente_actual,
             en_dolares=lambda: self.chk_en_dolares.isChecked(),
             cotizacion=self._cotizacion_actual,
+            hay_cotizacion_hoy=self._hay_cotizacion_hoy,
             al_cambiar=self._recalcular_totales,
             parent=self,
         )
@@ -293,6 +294,13 @@ class CotizacionVentaWindow(QMainWindow):
             return Decimal(hoy.DOLAR)
         ultima = self.repos.cotizacion().ultima()
         return Decimal(ultima.DOLAR) if ultima is not None and ultima.DOLAR else Decimal("1")
+
+    def _hay_cotizacion_hoy(self) -> bool:
+        """Ver el docstring homónimo en `facturador_window.py` (2026-08-22)
+        — mismo bloqueo real acá: una Cotización de Venta calculada sin
+        la cotización de HOY es tan engañosa como una Factura real."""
+        hoy = self.repos.cotizacion().by_fecha(date.today())
+        return hoy is not None and bool(hoy.DOLAR)
 
     def _on_en_dolares_cambiado(self) -> None:
         if self.renglones:

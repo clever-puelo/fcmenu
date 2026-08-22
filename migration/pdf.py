@@ -86,6 +86,7 @@ from reportlab.lib.pagesizes import A4, landscape
 from reportlab.lib.units import mm
 from reportlab.lib.utils import ImageReader
 from reportlab.pdfbase import pdfmetrics
+from reportlab.pdfbase.pdfmetrics import stringWidth
 from reportlab.pdfbase.ttfonts import TTFont
 from reportlab.pdfgen import canvas
 from reportlab.platypus import PageBreak, SimpleDocTemplate, Table, TableStyle
@@ -431,7 +432,7 @@ def _dibujar_pagina_factura(
     c.drawString(*pos(47, 18), "I.V.A. RESPONSABLE INSCRIPTO")
     if etiqueta_copia:
         c.setFont(FUENTE_TITULO, 9)
-        c.drawString(*pos(45, 100), etiqueta_copia)
+        c.drawString(*pos(45, 102), etiqueta_copia)
 
     # --- CUIT/IB/Partida/Imp.Internos/Fec.Inicio (Lucida→Courier, X=140) --
     c.setFont(FUENTE_FIJA, 8)
@@ -446,7 +447,7 @@ def _dibujar_pagina_factura(
     # la posición real, y ahora DENTRO de un recuadro (el original la
     # tenía suelta en esta réplica; el legacy sí la encierra en su propio
     # `DibujaRect`, ver docstring del módulo).
-    c.rect(105 * mm, y_de(32), 17 * mm, 17 * mm)
+    c.rect(105 * mm, y_de(31), 17 * mm, 17 * mm)
     c.setFont(FUENTE_TITULO, 30)
     c.drawString(*pos(26, 110), datos.letra)
     c.setFont(FUENTE_NORMAL, 7)
@@ -471,7 +472,7 @@ def _dibujar_pagina_factura(
     # --- Cliente + Condición de Venta, en un recuadro de lado a lado ------
     # Pedido del usuario, 2026-08-20 (2ª ronda de ajustes a ojo): antes
     # suelto, ahora en un recuadro que va de margen a margen.
-    c.rect(7 * mm, y_de(78), (ancho - 14 * mm), (78 - 49) * mm)
+    c.rect(7 * mm, y_de(77), (ancho - 14 * mm), (77 - 47) * mm)
     c.setFont(FUENTE_NORMAL, 10)
     c.drawString(*pos(53, 10), f"{datos.cliente_nombre}         ({datos.cliente_codigo})")
     c.drawString(*pos(58, 10), datos.cliente_domicilio)
@@ -551,7 +552,7 @@ def _dibujar_pagina_factura(
 
     # --- Subtotal crudo (sin etiqueta, réplica EmiFact.frm:1637, Y=231) ---
     c.setFont(FUENTE_TITULO, 9)
-    c.drawRightString(*pos(231, 198), format_decimal(datos.total.bruto))
+    c.drawRightString(*pos(236, 195), format_decimal(datos.total.bruto))
 
     # --- Son pesos... (réplica MontoEscrito, Y=236/240/244, X=30) ---------
     c.setFont(FUENTE_FIJA, 7)
@@ -559,20 +560,23 @@ def _dibujar_pagina_factura(
     texto_letras = prefijo_moneda + monto_en_palabras(datos.total.total)
     for i, inicio in enumerate((0, 70, 140)):
         c.drawString(*pos(236 + i * 4, 30), texto_letras[inicio : inicio + 70])
+        
+    # Linea totales    
+    c.line(7 * mm, 50 * mm, 198 * mm, 50 * mm )  
 
     # --- Totales en recuadros (réplica EmiFact.frm:1619-1637, Y=255/260) --
     # Negrita real por etiqueta (`Escribe` real: Subtotal/Descuento/IVA
     # NO son negrita — sólo el 2º "Subtotal" [neto] y "TOTAL" sí,
     # `EmiFact.frm:1630-1635`) — antes las 5 tenían el mismo estilo.
     etiquetas_totales = [
-        ("Subtotal", datos.total.bruto, False),
-        ("Descuento", datos.total.descuento, False),
-        ("Subtotal", datos.total.neto_gravado, True),
-        ("IVA Insc. 21%", datos.total.iva, False),
+        ("Subtotal", datos.total.bruto, False, False),
+        ("Descuento", datos.total.descuento, False, False),
+        ("Subtotal", datos.total.neto_gravado, True, False),
+        ("IVA Insc. 21%", datos.total.iva, False, False),
     ]
     if datos.total.percepcion_iibb > 0:
-        etiquetas_totales.append(("Perc. IIBB", datos.total.percepcion_iibb, False))
-    etiquetas_totales.append(("TOTAL", datos.total.total, True))
+        etiquetas_totales.append(("Perc. IIBB", datos.total.percepcion_iibb, False, False))
+    etiquetas_totales.append(("        TOTAL", datos.total.total, True, True))
 
     # Posiciones/anchos reales de las 6 cajas (`DibujaRect 260,7,268,37` /
     # `260,39,268,68` / `260,70,268,100` / `260,102,268,132` /
@@ -582,8 +586,19 @@ def _dibujar_pagina_factura(
     x_cajas = [7, 39, 70, 102, 166] if len(etiquetas_totales) == 5 else [7, 39, 70, 102, 134, 166]
     y_caja_bottom = y_de(268)
     alto_caja = 8 * mm
-    for (etiqueta, valor, negrita), x_mm in zip(etiquetas_totales, x_cajas):
-        es_total = etiqueta == "TOTAL"
+    # `es_total` viaja YA CALCULADO en la propia tupla (2026-08-22, bug
+    # real reportado por el usuario — "el total de la factura impresa
+    # tampoco está en negrita"): antes se re-derivaba acá comparando
+    # `etiqueta == "      TOTAL"` (11 espacios) contra el valor real
+    # armado arriba con "        TOTAL" (13 espacios, línea de arriba)
+    # — un typo de espacios que hacía que la comparación NUNCA diera
+    # `True`, así que el importe del TOTAL jamás se dibujó en negrita
+    # ni la caja se ensanchó/sombreó (confirmado extrayendo la fuente
+    # real del PDF: el importe salía en `ArialMT` común, no
+    # `Arial-BoldMT` — sólo la ETIQUETA "TOTAL" de arriba, que usa el
+    # flag `negrita` — aparte, no roto — se veía bien, por eso a
+    # simple vista parecía correcto).
+    for (etiqueta, valor, negrita, es_total), x_mm in zip(etiquetas_totales, x_cajas):
         ancho_caja_mm = 36 if es_total else 30
         x0 = x_mm * mm
         if es_total:
@@ -595,8 +610,13 @@ def _dibujar_pagina_factura(
         # títulos se veían más chicos/corridos a la izquierda que los
         # valores de abajo (2ª ronda de ajustes a ojo).
         c.setFont(FUENTE_NEGRITA if negrita else FUENTE_NORMAL, 10)
-        c.drawString(*pos(255, x_mm + 2), etiqueta)
-        c.setFont(FUENTE_NEGRITA if es_total else FUENTE_NORMAL, 9)
+        c.drawString(*pos(258, x_mm + 2), etiqueta)
+        # El TOTAL final a tamaño 10 (pedido del usuario, 2026-08-22 —
+        # antes 9, igual que el resto de las cajas) — la caja de TOTAL ya
+        # venía más ancha que las demás (36mm vs 30mm) así que a tamaño
+        # 10 el importe sigue entrando sobrado (medido: hasta "$
+        # 1.234.567,89" ocupa ~24mm), no hizo falta agrandarla más.
+        c.setFont(FUENTE_NEGRITA if es_total else FUENTE_NORMAL, 10 if es_total else 9)
         c.drawRightString(*pos(266, x_mm + ancho_caja_mm - 2), format_decimal(valor))
 
     # --- CAE + Vencimiento + QR (Y=270/274/269, X=132/137/7) ---------------
@@ -609,13 +629,13 @@ def _dibujar_pagina_factura(
         c.drawString(*pos(270, 40), "Documento sin validez fiscal — no es Factura.")
         c.drawString(*pos(275, 40), "Precios sujetos a modificación sin previo aviso.")
     elif datos.cae is not None and datos.cae_vencimiento is not None and datos.qr_url is not None:
-        c.drawString(*pos(274, 40), f"C.A.E.: {datos.cae}")
-        c.drawString(*pos(278, 40), f"Fec.Vto.: {datos.cae_vencimiento.strftime('%d/%m/%Y')}")
+        c.drawString(*pos(281, 40), f"C.A.E.: {datos.cae}")
+        c.drawString(*pos(285, 40), f"Fec.Vto.: {datos.cae_vencimiento.strftime('%d/%m/%Y')}")
         if datos.observaciones_afip:
             # Réplica de EmiFact.frm:1722-1725 — AFIP puede aprobar CON
             # advertencias, no sólo rechazar.
             c.setFont(FUENTE_NORMAL, 7)
-            c.drawString(*pos(284, 40), f"Se asignó CAE pero con advertencias. Motivo: {datos.observaciones_afip}")
+            c.drawString(*pos(290, 40), f"Se asignó CAE pero con advertencias. Motivo: {datos.observaciones_afip}")
 
         qr_widget = qr.QrCodeWidget(datos.qr_url)
         bounds = qr_widget.getBounds()
@@ -626,7 +646,7 @@ def _dibujar_pagina_factura(
         dibujo.add(qr_widget)
         renderPDF.draw(dibujo, c, 7 * mm, y_de(269) - tamano)
     else:
-        c.drawString(*pos(270, 40), "CAE: (pendiente — todavía no se solicitó a AFIP)")
+        c.drawString(*pos(280, 40), "CAE: (pendiente — todavía no se solicitó a AFIP)")
         _dibujar_sello_borrador(c, ancho, alto)
 
 
@@ -715,11 +735,23 @@ def _dibujar_membrete_no_fiscal(
 
     _dibujar_logo(c, 10 * mm, y_pt(5), ancho=50 * mm)
     c.setFont(FUENTE_TITULO, 20)
-    c.drawString(*pos(19, 63), "S.R.L.")
+    c.drawString(*pos(19.5, 62), "S.R.L.")
+
+    # Recuadro grande + 4 líneas finas que dividen — réplica real
+    # (`EmiRec.frm`/`NCInterna.frm`: `DibujaRect 5, 7, 130, 200, 30, 30` +
+    # `DibujaLine` en Lin 31/46/53/105, mismas coordenadas para ambos
+    # documentos). Sistema real Lin=fila/Col=columna en mm desde arriba —
+    # convertido acá con `pos()`/`y_pt()` (el ancho de línea 0.35pt "fino"
+    # ya lo dejó puesto el llamador).
+    
+    c.rect(6 * mm, y_pt(129), 192 * mm, 125 * mm)
+    c.line(6 * mm, y_pt(30), 198 * mm, y_pt(30))    # cabecera de títulos
+    c.line(6 * mm, y_pt(46), 198 * mm, y_pt(46))    # tít. de detalle y cabecera
+    c.line(6 * mm, y_pt(56), 198 * mm, y_pt(56))    # detalle de títulos
+    c.line(6 * mm, y_pt(103), 198 * mm, y_pt(103))  # totales de detalle
 
     c.setFont(FUENTE_TITULO, 24)
-    c.rect(1 * mm, y_pt(140), 150 * mm, 13 * mm)
-    c.drawCentredString(105.5 * mm, y_pt(12), letra)
+    c.drawCentredString(105.5 * mm, y_pt(17), letra)
 
     # Tamaño de fuente adaptado al largo del título ("Recibo Oficial" vs
     # "Nota de Crédito Interna", bastante más largo) — número SIEMPRE en
@@ -727,25 +759,24 @@ def _dibujar_membrete_no_fiscal(
     # títulos largos).
     tamano_titulo = 15 if len(titulo) <= 16 else 12
     c.setFont(FUENTE_TITULO, tamano_titulo)
-    c.drawString(*pos(13, 118), titulo)
-    c.setFont(FUENTE_TITULO, 10)
-    c.drawString(*pos(19.5, 118), numero_texto)
+    c.drawString(*pos(14, 140), titulo)
+    c.setFont(FUENTE_NORMAL, 12)
+    c.drawString(*pos(19.5, 146), numero_texto)
     c.setFont(FUENTE_NORMAL, 6.5)
     c.drawString(*pos(19, 98), "Documento no")
-    c.drawString(*pos(22, 98), "válido como Factura")
+    c.drawString(*pos(22, 94), "válido como Factura")
 
     c.setFont(FUENTE_NORMAL, 9)
-    c.drawRightString(ancho - 8 * mm, y_pt(5), f"Buenos Aires, {formatear_fecha_impresion(fecha)}")
+    c.drawRightString(ancho - 28 * mm, y_pt(8), f"Buenos Aires, {formatear_fecha_impresion(fecha)}")
 
-    c.setFont(FUENTE_TITULO, 8)
+    c.setFont(FUENTE_NORMAL, 9)
     c.drawString(*pos(23, 14), "Av. Crovara 2948 - (1766) La Tablada (BA)")
-    c.drawString(*pos(28, 14), "Tel. (011) 4652-1040 / 2684 / 2689 / 3080")
+    c.drawString(*pos(27, 14), "Tel. (011) 4652-1040 / 2684 / 2689 / 3080")
 
     c.setFont(FUENTE_NORMAL, 7)
-    c.drawString(*pos(23, 120), "Imp.Int.: No Resp.   I.B.: 901 33-70346790-9")
-    c.drawString(*pos(28, 120), "Part.Munic.: 1985   CUIT: 33-70346790-9")
-
-
+    c.drawString(*pos(23.5, 135), "Imp.Int.: No Resp.   I.B.: 901 33-70346790-9")
+    c.drawString(*pos(27, 135), "Part.Munic.: 1985   CUIT: 33-70346790-9")
+   
 def generar_pdf_recibo(datos: DatosReciboPDF, directorio_salida: Optional[Path] = None) -> Path:
     """Genera el PDF del Recibo — 2 copias (Original/Duplicado)
     apiladas en UNA hoja A4 (réplica real, ver docstring de arriba).
@@ -764,11 +795,23 @@ def generar_pdf_recibo(datos: DatosReciboPDF, directorio_salida: Optional[Path] 
     ancho, alto = A4
 
     for indice_copia, etiqueta in enumerate(("Original", "Duplicado")):
-        offset_mm = indice_copia * 145  # réplica real de MasLin=145
+        offset_mm = indice_copia * 140  # réplica real de MasLin=145
         _dibujar_copia_recibo(c, datos, ancho, alto, offset_mm, etiqueta)
     c.showPage()
     c.save()
     return ruta
+
+
+def _truncar_a_ancho(texto: str, fuente: str, tamano: float, ancho_max_pt: float) -> str:
+    """Recorta `texto` (con "…" al final) para que entre en `ancho_max_pt`
+    puntos con esa fuente/tamaño — usado para el nombre del Banco en el
+    Recibo (bug real, 2026-08-22: un nombre de Banco largo, ej. "AMERICAN
+    EXPRESS BANK LTD. SOC", pisaba la columna Fecha de al lado)."""
+    if stringWidth(texto, fuente, tamano) <= ancho_max_pt:
+        return texto
+    while texto and stringWidth(texto + "…", fuente, tamano) > ancho_max_pt:
+        texto = texto[:-1]
+    return (texto + "…") if texto else ""
 
 
 def _dibujar_copia_recibo(
@@ -777,41 +820,46 @@ def _dibujar_copia_recibo(
     def y_pt(lin_mm: float) -> float:
         return alto - (offset_mm + lin_mm) * mm
 
-    c.setLineWidth(0.35)  # líneas/recuadros finos, pedido del usuario 2026-08-20
+    c.setLineWidth(0.1)  # más finas todavía, pedido del usuario 2026-08-22 (0.35 seguía viéndose grueso)
     _dibujar_membrete_no_fiscal(
         c, ancho, alto, offset_mm, "X", "Recibo Oficial", f"0001-{datos.numero:08d}", datos.fecha,
     )
+    # Línea divisoria Comprobantes Cancelados / Valores Recibidos — sólo en
+    # Recibo (NC Interna no tiene columna de "Valores Recibidos", réplica
+    # real `DibujaLine 46, 95, 105, 95` de `EmiRec.frm`, ausente en
+    # `NCInterna.frm`).
+    c.line(95 * mm, y_pt(46), 95 * mm, y_pt(103))
 
     margen_x = 8 * mm
-    y = y_pt(32)
+    y = y_pt(34)
     c.setFont(FUENTE_TITULO, 9)
     c.drawString(margen_x, y, f"Sr./es: ({datos.cliente_codigo}) {datos.cliente_nombre}")
     c.setFont(FUENTE_NORMAL, 9)
-    y = y_pt(37)
+    y = y_pt(38.5)
     c.drawString(margen_x, y, datos.cliente_domicilio)
-    y = y_pt(42)
+    y = y_pt(43)
     c.drawString(margen_x, y, f"({datos.cliente_cp}) {datos.cliente_localidad} {datos.cliente_provincia_codigo}".strip())
-    c.setFont(FUENTE_TITULO, 9)
+    c.setFont(FUENTE_NORMAL, 9)
     c.drawString(
         margen_x + 92 * mm, y,
         f"IVA: {CONDICIONES_IVA.get(datos.cliente_civa, '—')}     CUIT : {datos.cliente_cuit or 's/d'}",
     )
 
     # --- Comprobantes Cancelados / Valores Recibidos (2 columnas) --------
-    y = y_pt(46)
+    y = y_pt(49.5)
     c.setFont(FUENTE_TITULO, 8)
-    c.drawString(margen_x, y, "Comprobantes Cancelados")
-    c.drawString(margen_x + 90 * mm, y, "Valores Recibidos")
-    y = y_pt(49)
-    c.setFont(FUENTE_TITULO, 7)
+    c.drawString(margen_x + 30, y, "Comprobantes Cancelados")
+    c.drawString(margen_x + 125 * mm, y, "Valores Recibidos")
+    y = y_pt(54)
+    c.setFont(FUENTE_NORMAL, 7)
     c.drawString(margen_x, y, "Tipo")
     c.drawString(margen_x + 15 * mm, y, "Nro.")
-    c.drawString(margen_x + 35 * mm, y, "Fecha")
-    c.drawRightString(margen_x + 88 * mm, y, "Importe")
+    c.drawString(margen_x + 40 * mm, y, "Fecha")
+    c.drawRightString(margen_x + 82 * mm, y, "Importe")
     c.drawString(margen_x + 90 * mm, y, "Nro./Tipo")
     c.drawString(margen_x + 115 * mm, y, "Bco./Detalle")
-    c.drawString(margen_x + 145 * mm, y, "Fecha")
-    c.drawRightString(margen_x + 192 * mm, y, "Importe")
+    c.drawString(margen_x + 161 * mm, y, "Fecha")
+    c.drawRightString(margen_x + 186 * mm, y, "Importe")
 
     c.setFont(FUENTE_NORMAL, 7)
     y_izq = y - 8
@@ -825,28 +873,53 @@ def _dibujar_copia_recibo(
         c.drawString(margen_x, y_izq, etiqueta)
         c.drawString(margen_x + 15 * mm, y_izq, str(comprobante.CPBTE))
         c.drawString(margen_x + 35 * mm, y_izq, fecha_txt)
-        c.drawRightString(margen_x + 88 * mm, y_izq, format_decimal(aplicacion.importe_aplicado))
+        c.drawRightString(margen_x + 86 * mm, y_izq, format_decimal(aplicacion.importe_aplicado))
     if datos.anticipo > 0:
         y_izq -= 8
         c.drawString(margen_x, y_izq, "Pago a Cuenta (Anticipo)")
-        c.drawRightString(margen_x + 88 * mm, y_izq, format_decimal(datos.anticipo))
+        c.drawRightString(margen_x + 86 * mm, y_izq, format_decimal(datos.anticipo))
 
     y_der = y - 8
-    medios: list[tuple[str, str, Decimal]] = []
+    # 4to campo = fecha del cheque (`fecha_vencimiento` — réplica real,
+    # `DetPago.frm:905` graba esa misma columna del FG1 con el comentario
+    # explícito "Fec.Vto.", y `EmiRec.frm:666` la imprime tal cual) —
+    # vacía para Efectivo/Retención, que no tienen una fecha propia.
+    medios: list[tuple[str, str, str, Decimal]] = []
     if datos.importe_efectivo > 0:
-        medios.append(("* Efectivo *", "", datos.importe_efectivo))
+        medios.append(("* Efectivo *", "", "", datos.importe_efectivo))
     for pago_cheque in datos.cheques:
         tipo_ch = "ECh" if pago_cheque.tipo_cheque == 1 else ""
-        medios.append((f"{tipo_ch} {pago_cheque.nro_cheque}".strip(), f"Bco. {pago_cheque.banco}", pago_cheque.importe))
+        fecha_cheque = formatear_fecha_dd_mmm(pago_cheque.fecha_vencimiento) if pago_cheque.fecha_vencimiento else ""
+        # `pago_cheque.banco` ya viene con el NOMBRE resuelto (no el
+        # código) — bug real reportado por el usuario (2026-08-22):
+        # imprimía el código ("Bco. xx"), resuelto por el llamador
+        # (`ReciboWindow._cheques_para_pdf`, `pdf.py` no tiene acceso a
+        # la tabla de Bancos).
+        medios.append((
+            f"{tipo_ch} {pago_cheque.nro_cheque}".strip(),
+            f"Bco. {pago_cheque.banco}",
+            fecha_cheque,
+            pago_cheque.importe,
+        ))
     for retencion in datos.retenciones:
-        medios.append((retencion.concepto or f"Tipo {retencion.tipreg}", "", retencion.importe))
-    for texto_izq, texto_medio, importe in medios:
+        medios.append((retencion.concepto or f"Tipo {retencion.tipreg}", "", "", retencion.importe))
+    for texto_izq, texto_medio, fecha_txt, importe in medios:
         y_der -= 8
         if y_der < y_pt(100):
             break
-        c.drawString(margen_x + 90 * mm, y_der, texto_izq)
-        c.drawString(margen_x + 115 * mm, y_der, texto_medio)
-        c.drawRightString(margen_x + 192 * mm, y_der, format_decimal(importe))
+        # Nro./Tipo ajustado a la derecha (pedido del usuario, 2026-08-22)
+        # — pegado contra el borde izquierdo de la columna "Bco./Detalle".
+        # "Bco./Detalle" ensanchada a 46mm (era 35mm — un nombre de Banco
+        # real, ej. "BANCO HIPOTECARIO S.A.", pisaba la Fecha de al lado)
+        # a costa de la columna Fecha (le sobraba de punta a punta, una
+        # fecha corta entra sobrada en 25mm) — igual, algunos Bancos
+        # reales son más largos todavía (ej. "AMERICAN EXPRESS BANK LTD.
+        # SOC", 30 caracteres) y siguen sin entrar: se recorta con "…" al
+        # ancho real disponible como último recurso (`_truncar_a_ancho`).
+        c.drawRightString(margen_x + 113 * mm, y_der, texto_izq)
+        c.drawString(margen_x + 115 * mm, y_der, _truncar_a_ancho(texto_medio, FUENTE_NORMAL, 7, 44 * mm))
+        c.drawString(margen_x + 161 * mm, y_der, fecha_txt)
+        c.drawRightString(margen_x + 188 * mm, y_der, format_decimal(importe))
 
     # --- Totales + firma ---------------------------------------------------
     y = y_pt(101)
@@ -865,17 +938,17 @@ def _dibujar_copia_recibo(
     c.drawString(margen_x + 40 * mm, y, f"Son Pesos: {monto_en_palabras(datos.total_pago)}")
 
     y = y_pt(120)
-    c.drawString(ancho - margen_x - 45 * mm, y, "___________________")
-    c.drawCentredString(ancho - margen_x - 22 * mm, y_pt(125), "Por Alestel SRL")
+    c.drawString(ancho - margen_x - 48 * mm, y, "___________________")
+    c.drawCentredString(ancho - margen_x - 32 * mm, y_pt(125), "Por Alestel SRL")
 
     c.setFont(FUENTE_NORMAL, 7)
     c.drawString(margen_x, y_pt(125), "Este pago no implica cancelación de intereses por pago de facturas fuera de término")
 
-    c.setFont(FUENTE_TITULO, 8)
-    c.drawRightString(ancho - margen_x, y_pt(132), etiqueta_copia)
+    c.setFont(FUENTE_NORMAL, 8)
+    c.drawRightString(ancho - margen_x - 20, y_pt(133), etiqueta_copia)
 
     c.setFont(FUENTE_NORMAL, 6)
-    c.drawString(margen_x, y_pt(132), f"Correlativo: {datos.correlativo}")
+    c.drawString(margen_x, y_pt(133), f"Correlativo: {datos.correlativo}")
 
 
 # ---------------------------------------------------------------------------
